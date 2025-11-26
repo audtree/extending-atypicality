@@ -1,0 +1,601 @@
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
+import hashlib
+import scipy.stats as stats
+
+from sklearn.neighbors import NearestNeighbors
+from scipy.stats import multivariate_normal, norm, multivariate_t
+from sklearn.linear_model import LinearRegression
+
+from sklearn.mixture import GaussianMixture
+from sklearn.covariance import LedoitWolf, ShrunkCovariance
+from sklearn.gaussian_process.kernels import RBF, ConstantKernel as C
+from tqdm import tqdm
+
+
+def hash_dataset(dataset):
+    """Create a unique hash for a dataset to use as a cache key."""
+    dataset_tuple = tuple((tuple(x), y) for x, y in dataset)
+    return hashlib.md5(str(dataset_tuple).encode()).hexdigest()
+
+# KNN Atypicality Score
+def knn_score(input_point, dataset, k=5):
+  """
+  Calculates a score based on the average difference between the input point and the
+  its k nearest neighbors with similar outputs.
+
+  Args:
+    input_point: A tuple (x_i, y_i_hat) where x_i is a vector of predictors and y_i_hat is the predicted output.
+    dataset: A list of tuples [(x_1, y_1), (x_2, y_2), ...] where x_i is a vector of predictors and y_i is the corresopnding output.
+    k: The number of nearest neighbors to consider.
+
+  Returns:
+    The score, which is the difference between the input x and the average x
+    of its k nearest neighbors with similar outputs.
+  """
+  x_i, y_i_hat = input_point
+  X = [point[0] for point in dataset]
+  y = [point[1] for point in dataset]
+
+  # Find the k nearest neighbors based on y values
+  neigh = NearestNeighbors(n_neighbors=k, metric='euclidean')
+  neigh.fit(np.array(y).reshape(-1, 1))
+  distances, indices = neigh.kneighbors(np.array(y_i_hat).reshape(1, -1))
+
+  nearest_neighbors = [X[i] for i in indices[0]] # Does this do what I want it to do 
+
+  # Compute the mean distance from x_q to the k-nearest neighbors in feature space
+  score = np.mean([np.linalg.norm(np.array(x_i) - np.array(neighbor)) for neighbor in nearest_neighbors])
+
+  return score
+
+# KDE Atypicality Score
+def gaussian_kernel(y_i, y_q_hat, bandwidth=1.0):
+    return np.exp(-((y_i - y_q_hat) ** 2) / (2 * bandwidth ** 2))
+
+def kde_score(input_point, dataset, kernel_function):
+    """
+    Calculate the KDE-based score.
+
+    Parameters:
+        input_point (tuple): A tuple (x_i, y_i_hat) where x_q is the feature vector and y_i_hat is the predicted output.
+        dataset (list of tuples): A list [(x_1, y_1), (x_2, y_2), ...] where x_i is a feature vector and y_i is the output.
+        kernel_function (callable): Function K(yi, y_i_hat) that returns the kernel weight.
+
+    Returns:
+        float: KDE-based score.
+    """
+    x_i, y_i_hat = input_point  # Extract x_q and y_q_hat from input_point
+
+    # Extract feature vectors (X) and target values (y) from the dataset
+    X = [point[0] for point in dataset] 
+    y = [point[1] for point in dataset] 
+
+    weights = np.array([kernel_function(yi, y_i_hat) for yi in y])
+    if np.sum(weights) == 0:
+        weights_normalized = np.zeros_like(weights)
+    else:
+        weights_normalized = weights / np.sum(weights)
+    weighted_mean_distance = np.sum(
+        [weights_normalized[i] * np.linalg.norm(np.array(x_i) - np.array(X[i])) for i in range(len(X))]
+    )
+
+    return weighted_mean_distance
+
+# Joint MVN Score
+def joint_mvn_score(input_point, dataset):
+    """
+    Calculate the Joint MVN Atypicality Score.
+
+    Parameters:
+        input_point (tuple): A tuple (x_i, y_i_hat) where x_i is the feature vector and y_i_hat is the predicted output.
+        dataset (list of tuples): A list [(x_1, y_1), (x_2, y_2), ...] where x_i is a feature vector and y_i is the output.
+
+    Returns:
+        float: Joint MVN atypicality score.
+    """
+    x_i, y_i_hat = input_point 
+
+    # Extract feature vectors (X) and target values (y) from the dataset
+    X = np.array([point[0] for point in dataset])  
+    y = np.array([point[1] for point in dataset]) 
+
+    # Estimate the parameters of the joint MVN
+    mu_X = np.mean(X, axis=0)  
+    mu_Y = np.mean(y) 
+    
+    # Covariance matrices
+    Sigma_XX = np.cov(X, rowvar=False)  # Covariance of X
+    Sigma_YY = np.array([[np.var(y)]])          # Variance of Y (scalar, since Y is 1D)
+    Sigma_XY = np.cov(X.T, y, rowvar=True)[:-1, -1].reshape(-1, 1)  # Covariance between X and Y
+
+    # Compute joint probability P(X = x_i, Y = y_i_hat)
+    # Define the joint mean and covariance matrix for the multivariate normal
+    mu_joint = np.hstack((mu_X, mu_Y))
+    Sigma_joint = np.block([[Sigma_XX, Sigma_XY],
+                            [Sigma_XY.T, Sigma_YY]])
+    
+    # Create the multivariate normal distribution
+
+    # Eigenvalue Clipping to ensure that our covariance matrix is positive semi-definite   
+    eigvals, eigvecs = np.linalg.eigh(Sigma_joint)          # Perform eigen decomposition
+    eigvals[eigvals < 0] = 1e-6    # Clip negative eigenvalues
+    Sigma_joint = eigvecs @ np.diag(eigvals) @ eigvecs.T # Reconstruct the covariance matrix
+
+    rv_joint = multivariate_normal(mean=mu_joint, cov=Sigma_joint, allow_singular=True) #TODO: check whether allow_singular=True is counterintuitive or not good
+
+    # Compute the joint probability at the input point
+    joint_prob = rv_joint.pdf(np.hstack((x_i, y_i_hat)))
+    
+    # Compute marginal probability P(Y = y_i_hat)
+    # Create the normal distribution for Y
+    rv_Y = norm(loc=mu_Y, scale=np.sqrt(Sigma_YY))
+
+    # Compute the marginal probability for Y
+    marginal_prob = rv_Y.pdf(y_i_hat)
+
+    # Compute atypicality score
+    atypicality_score = joint_prob / marginal_prob
+
+    return atypicality_score.item()
+
+# Log Joint MVN atypicality score
+logjointmvn_cache = {}
+
+def get_logjointmvn_params(dataset):
+    """Fit a GMM and return its parameters."""
+    # Extract feature vectors (X) and target values (y) from the dataset
+    X = np.array([point[0] for point in dataset])  
+    y = np.array([point[1] for point in dataset]) 
+
+    # Estimate the parameters of the joint MVN
+    mu_X = np.mean(X, axis=0)  
+    mu_Y = np.mean(y) 
+    
+    # print("Means (mu_X, mu_Y):", mu_X, mu_Y)
+
+    # Covariance Matrices
+    shrunk = ShrunkCovariance()
+    shrunk.fit(X) 
+    Sigma_XX = shrunk.covariance_
+    Sigma_YY = np.array([[np.var(y, ddof=1)]])          # Variance of Y (scalar, since Y is 1D)
+    Sigma_XY = np.cov(X.T, y, rowvar=True)[:-1, -1].reshape(-1, 1)  # Covariance between X and Y
+
+    # Compute joint probability P(X = x_i, Y = y_i_hat)
+    # Define the joint mean and covariance matrix for the multivariate normal
+    mu_joint = np.hstack((mu_X, mu_Y))
+    Sigma_joint = np.block([[Sigma_XX, Sigma_XY],
+                            [Sigma_XY.T, Sigma_YY]])
+    
+    # Regularize the covariance matrix (e.g., adding a small value to the diagonal)
+    epsilon = 1e-6
+    Sigma_joint += epsilon * np.eye(Sigma_joint.shape[0])  # Add regularization to prevent singular matrix
+
+    # Create the multivariate normal distribution
+    # Eigenvalue Clipping to ensure that our covariance matrix is positive semi-definite
+    eigvals, eigvecs = np.linalg.eigh(Sigma_joint)  # Perform eigen decomposition
+    eigvals[eigvals < epsilon] = epsilon    # Clip small eigenvalues to a small positive number
+    Sigma_joint = eigvecs @ np.diag(eigvals) @ eigvecs.T    # Reconstruct the covariance matrix
+
+    rv_joint = multivariate_normal(mean=mu_joint, cov=Sigma_joint, allow_singular=True) # TODO: check whether you can allow singular 
+    rv_Y = norm(loc=mu_Y, scale=np.sqrt(Sigma_YY))
+
+    return rv_joint, rv_Y
+
+def log_joint_mvn_score(input_point, dataset):
+    """
+    Calculate the Negative Log Joint MVN Atypicality Score.
+
+    Parameters:
+        input_point (tuple): A tuple (x_i, y_i_hat) where x_i is the feature vector and y_i_hat is the predicted output.
+        dataset (list of tuples): A list [(x_1, y_1), (x_2, y_2), ...] where x_i is a feature vector and y_i is the output.
+
+    Returns:
+        float: Negative Log Joint MVN atypicality score.
+    """
+    x_i, y_i_hat = input_point 
+    y_i_hat = np.array(y_i_hat).reshape(-1) # Ensure y_i_hat is a 1D array (shape: (1,))
+
+    # Load or compute Log Joint MVN parameters
+    dataset_hash = hash_dataset(dataset)
+    if dataset_hash not in logjointmvn_cache:
+        logjointmvn_cache[dataset_hash] = get_logjointmvn_params(dataset)
+    rv_joint, rv_Y = logjointmvn_cache[dataset_hash]
+
+    # Compute log probability instead of probability
+    EPSILON = 1e-12  # Small constant to prevent log(0)
+    log_joint_density = rv_joint.logpdf(np.hstack((x_i, y_i_hat)))
+
+    # Compute log marginal probability log P(Y = y_i_hat)
+    log_marginal_density = rv_Y.logpdf(y_i_hat)
+
+    # Compute log atypicality score
+    log_atypicality_score = - (log_joint_density - log_marginal_density)
+
+    # Truncate values if less than 0 (means the point is very typical)
+    log_atypicality_score = max(log_atypicality_score.item(), 0.0)
+
+    return log_atypicality_score
+
+# Lognormal atypicality score
+lognormal_cache = {}
+
+def get_lognormal_params(dataset):
+    """Fit a GMM and return its parameters."""
+    # Extract feature vectors (X) and target values (y) from the dataset
+    X = np.array([point[0] for point in dataset])  
+    y = np.array([point[1] for point in dataset]) 
+
+    # Estimate sigma and mu_X of the latent normal distribution
+    X_normal = np.log(X)  # Transform to normal space
+    mu_X = X_normal.mean(axis=0)
+
+    lw = LedoitWolf()
+    lw.fit(X_normal)
+    Sigma_X = lw.covariance_
+
+    # Estimate weights of Y = Xw + error using least squares
+    w = np.linalg.inv(X.T @ X) @ X.T @ y
+
+    # Estimate residual variance
+    sigma_sq = np.mean((y - X @ w) ** 2)
+
+    # Compute posterior covariance
+    # To ensure Sigma_X_given_Y is positive semi-denfinite, add epsilon to the diagnoal 
+    Sigma_X_given_Y = Sigma_X - (Sigma_X @ np.outer(w, w) @ Sigma_X) / sigma_sq
+    epsilon = max(1e-5, np.max(np.diag(Sigma_X_given_Y)) * 1e-5)  # Scale by largest variance
+    Sigma_X_given_Y += epsilon  * np.eye(Sigma_X_given_Y.shape[0])
+
+    # Eigenvalue Clipping to ensure that our covariance matrix is positive semi-definite
+    eigvals, eigvecs = np.linalg.eigh(Sigma_X_given_Y)
+    eigvals[eigvals < epsilon] = epsilon  # Replace negative eigenvalues with a small positive number
+    Sigma_X_given_Y = eigvecs @ np.diag(eigvals) @ eigvecs.T
+
+    return mu_X, Sigma_X, w, sigma_sq, Sigma_X_given_Y
+
+def lognormal_score(input_point, dataset):
+    """
+    Calculate the LogNormal Atypicality Score, which is P(X|Y) where X is distributed LogNormal and Y is a linear function of X plus Gaussian Noise. 
+
+    Parameters:
+        input_point (tuple): A tuple (x_i, y_i_hat) where x_i is the feature vector and y_i_hat is the predicted output.
+        dataset (list of tuples): A list [(x_1, y_1), (x_2, y_2), ...] where x_i is a feature vector and y_i is the output.
+
+    Returns:
+        float: Negative Log LogNormal Atypicality Score.
+
+    Note:
+        Important to note that because we're working with continuous r.v.'s, we are not using P(X|Y). 
+        We're really using f(x), which is not bounded by [0,1] and can take on any positive real. Thus log(f(x|y)) can be greater than 1. 
+    """
+    x_i, y_i_hat = input_point 
+    y_i_hat = np.array(y_i_hat).reshape(-1) # Ensure y_i_hat is a 1D array (shape: (1,))
+
+    # Load or compute GMM parameters
+    dataset_hash = hash_dataset(dataset)
+    if dataset_hash not in lognormal_cache:
+        lognormal_cache[dataset_hash] = get_lognormal_params(dataset)
+    mu_X, Sigma_X, w, sigma_sq, Sigma_X_given_Y = lognormal_cache[dataset_hash]
+
+    # Compute posterior mean and covariance
+    mu_X_given_Y = mu_X + Sigma_X @ w * (y_i_hat - w.T @ np.exp(mu_X)) / (w.T @ Sigma_X @ w + sigma_sq) # TODO: check these equations! Eessentially, my mahalonobis distance is too big. the distance between the mean and x is very large... are we calculating this mu correctly? 
+
+    # Convert x to normal space
+    x_normal = np.log(x_i)
+
+    # Compute density using multivariate normal PDF
+    log_mvn_density = multivariate_normal.logpdf(x_normal, mean=mu_X_given_Y, cov=Sigma_X_given_Y)
+    lognormal_score = - (log_mvn_density - np.log(np.prod(x_i)))
+    
+    # Truncate values if less than 0 (means the point is very typical)
+    lognormal_score = max(lognormal_score.item(), 0.0)
+
+    # Check if lognormal_score is inf or -inf
+    if np.isinf(lognormal_score):
+        print("\nWARNING: lognormal_score is", lognormal_score)
+        print("Intermediate values:")
+        print(f"x_i: {x_i}")
+        print(f"y_i_hat: {y_i_hat}")
+        print(f"mu_X: {mu_X}")
+        print(f"Sigma_X: {Sigma_X}")
+        print(f"w: {w}")
+        print(f"sigma_sq: {sigma_sq}")
+        print(f"Sigma_X_given_Y: {Sigma_X_given_Y}")
+        print(f"mu_X_given_Y: {mu_X_given_Y}")
+        print(f"x_normal (log of x_i): {x_normal}")
+        print(f"log_mvn_density: {log_mvn_density}")
+        print(f"np.log(np.prod(x_i)): {np.log(np.prod(x_i))}")
+
+    return lognormal_score
+
+# GMM atypicality score
+gmm_cache = {}
+
+def get_gmm_params(dataset):
+    """Fit a GMM and return its parameters."""
+    # Extract feature vectors (X) and target values (y) from the dataset
+    X = np.array([point[0] for point in dataset])  
+    y = np.array([point[1] for point in dataset]) 
+
+    # Estimate beta using linear regression
+    model = LinearRegression()
+    model.fit(X, y)
+    beta_hat = model.coef_
+    
+    # Estimate sigma^2
+    residuals = y - X @ beta_hat
+    sigma_hat = max(np.std(residuals), 1e-9) # if the model is perfectly overfit, sigma_hat will be 0 (division by 0)
+    
+    # Fit a GMM to X
+    gmm = GaussianMixture(n_components=3, covariance_type='full', random_state=42) # TODO: how to determine the number of components here? and which random seed to use for fitting? 
+    gmm.fit(X)
+
+    return beta_hat, sigma_hat, gmm
+
+def gmm_score(input_point, dataset):
+    """
+    Calculate the GMM Atypicality Score, which is P(X|Y) where X is distributed GMM and Y is a linear function of X plus Gaussian Noise. 
+
+    Parameters:
+        input_point (tuple): A tuple (x_i, y_i_hat) where x_i is the feature vector and y_i_hat is the predicted output.
+        dataset (list of tuples): A list [(x_1, y_1), (x_2, y_2), ...] where x_i is a feature vector and y_i is the output.
+
+    Returns:
+        float: Negative Log GMM Atypicality Score.
+
+    Note:
+        Important to note that because we're working with continuous r.v.'s, we are not using P(X|Y). 
+        We're really using f(x), which is not bounded by [0,1] and can take on any positive real. Thus log(f(x|y)) can be greater than 1. 
+    """
+    x_i, y_i_hat = input_point 
+    y_i_hat = np.array(y_i_hat).reshape(-1) # Ensure y_i_hat is a 1D array (shape: (1,))
+
+    # Load or compute GMM parameters
+    dataset_hash = hash_dataset(dataset)
+    if dataset_hash not in gmm_cache:
+        gmm_cache[dataset_hash] = get_gmm_params(dataset)
+    beta_hat, sigma_hat, gmm = gmm_cache[dataset_hash]
+
+    # Compute P(Y | X) assuming y | X ~ N(X @ beta, sigma^2)
+    py_given_x = norm.pdf(y_i_hat, loc=x_i @ beta_hat, scale=sigma_hat)
+    
+    # Compute P(X) using the fitted GMM
+    if np.isnan(x_i).any():
+        raise ValueError("NaN detected in x_i before computing GMM score.")
+    px = np.exp(gmm.score_samples(x_i.reshape(1, -1)))[0]
+    
+    # Compute marginal P(Y) via integral P(Y) = ∫ P(Y|X) P(X) dX
+    # Approximate using Monte Carlo by averaging over sampled X
+    X_samples = gmm.sample(1000)[0]  # Sample from the GMM
+    py_samples = norm.pdf(y_i_hat, loc=X_samples @ beta_hat, scale=sigma_hat)
+    py = np.mean(py_samples)  # Approximate integral
+    
+    # Compute P(X | Y) using Bayes' theorem
+    if py == 0:
+        print("Warning: py is zero, setting px_given_y to a small value.")
+        px_given_y = 1e-9  # Prevent division by zero, use a small value
+    else:
+        px_given_y = (py_given_x * px) / py
+
+    # Safeguard to prevent log of zero or too small values
+    if px_given_y <= 1e-15:
+        print(f"Warning: px_given_y is too small ({px_given_y}), setting to 1e-15.")
+        px_given_y = 1e-9  # Avoid log(0) or log(small number)
+
+    # Compute the score
+    gmm_score = -np.log(px_given_y + 1e-9)
+
+    return gmm_score.item()
+
+# Joint Lognormal atypicality score
+jointlognormal_cache = {}
+
+def get_jointlognormal_params(dataset):
+    """Fit a multivariate lognormal distribution to (X, Y)."""
+    # Extract feature vectors (X) and target values (y) from the dataset
+    X = np.array([point[0] for point in dataset])  
+    y = np.array([point[1] for point in dataset]) 
+
+    assert np.all(X >= 0), "Array contains negative values!"
+  
+    # Convert (X, Y) to log-space to assume normality
+    X_log = np.log(X)
+    y_log = np.log(y)
+    
+    # Stack X_log and y_log to form the joint log-space representation
+    XY_log = np.column_stack((X_log, y_log))
+
+    # Compute mean and covariance in log-space
+    mu_log = np.mean(XY_log, axis=0)
+    
+    lw = LedoitWolf()
+    lw.fit(XY_log)
+    Sigma_log = lw.covariance_
+
+    # Regularization to ensure positive semi-definite covariance
+    epsilon = 1e-6
+    eigvals, eigvecs = np.linalg.eigh(Sigma_log)
+    eigvals[eigvals < epsilon] = epsilon  
+    Sigma_log = eigvecs @ np.diag(eigvals) @ eigvecs.T
+
+    return mu_log, Sigma_log
+
+def jointlognormal_score(input_point, dataset):
+    """Compute the log-likelihood under the joint lognormal model."""
+    x_i, y_i_hat = input_point 
+    y_i_hat = np.array(y_i_hat).reshape(-1) # Ensure y_i_hat is a 1D array (shape: (1,))
+
+    # Load or compute Log Joint MVN parameters
+    dataset_hash = hash_dataset(dataset)
+    if dataset_hash not in jointlognormal_cache:
+        jointlognormal_cache[dataset_hash] = get_jointlognormal_params(dataset)  
+    mu_log, Sigma_log = jointlognormal_cache[dataset_hash]
+
+    # Transform input to log-space
+    x_log = np.log(x_i)
+    y_log = np.log(y_i_hat)
+    xy_log = np.hstack((x_log, y_log))
+
+    # Compute log probability using a multivariate normal in log-space
+    log_mvn_density = multivariate_normal.logpdf(xy_log, mean=mu_log, cov=Sigma_log)
+
+    # Convert back from log-density
+    jointlognormal_score = -log_mvn_density
+
+    return max(jointlognormal_score.item(), 0.0)
+
+# Joint Skew t-distribution atypicality score
+jointskewt_cache = {}
+
+def get_jointskewt_params(dataset):
+    """Fit a multivariate skew-t distribution to (X, Y)."""
+    # Extract X (features) and y (target)
+    X = np.array([point[0] for point in dataset])
+    y = np.array([point[1] for point in dataset])
+
+    # Compute mean (location parameter)
+    mu = np.mean(np.column_stack((X, y)), axis=0)
+
+    # Compute covariance (scale matrix) using Ledoit-Wolf shrinkage
+    lw = LedoitWolf()
+    lw.fit(np.column_stack((X, y)))
+    Sigma = lw.covariance_
+
+    # Regularization to ensure positive semi-definite covariance
+    epsilon = 1e-6
+    eigvals, eigvecs = np.linalg.eigh(Sigma)
+    eigvals[eigvals < epsilon] = epsilon
+    Sigma = eigvecs @ np.diag(eigvals) @ eigvecs.T
+
+    # Estimate degrees of freedom (ν) heuristically
+    nu = 5  # You can tune this based on domain knowledge
+
+    return mu, Sigma, nu
+
+def jointskewt_score(input_point, dataset):
+    """Compute the log-likelihood under the joint skew-t model."""
+    x_i, y_i_hat = input_point
+    y_i_hat = np.array(y_i_hat).reshape(-1)  # Ensure 1D array
+
+    # Load or compute skew-t parameters
+    dataset_hash = hash_dataset(dataset)
+    if dataset_hash not in jointskewt_cache:
+        jointskewt_cache[dataset_hash] = get_jointskewt_params(dataset)
+    mu, Sigma, nu = jointskewt_cache[dataset_hash]
+
+    # Form input vector
+    xy = np.hstack((x_i, y_i_hat))
+
+    # Compute log probability using multivariate-t distribution
+    log_t_density = multivariate_t.logpdf(xy, loc=mu, shape=Sigma, df=nu)
+
+    # Convert to atypicality score (higher score = more atypical)
+    jointskewt_score = -log_t_density
+
+    return max(float(jointskewt_score), 0.0)  # Ensure scalar output
+
+def test_scores():
+    """
+    Test the knn_score, kde_score, and joint_mvn_atypicality_score, log_joint_mvn_score functions
+    using synthetic data.
+    """
+
+    # Define synthetic dataset
+    dataset = [
+        (np.array([1.0, 2.0]), 3.5),
+        (np.array([3.0, 1.0]), 2.5),
+        (np.array([0.5, 1.5]), 3.7),
+        (np.array([1.5, 2.5]), 3.2),
+        (np.array([2.0, 3.0]), 4.0)
+    ]
+
+    # Define input point
+    input_point = (np.array([1.0, 2.0]), 3.4)
+
+    # Test knn_score
+    try:
+        k = 3  # Number of neighbors for KNN
+        knn_result = knn_score(input_point, dataset, k)
+        assert isinstance(knn_result, float), "KNN score should return a float."
+        print(f"KNN score test passed. Result: {knn_result}")
+    except Exception as e:
+        print(f"KNN score test failed. Error: {e}")
+
+    # Test kde_score
+    try:
+        kde_bandwidth = 0.5  # Bandwidth for KDE
+        kde_result = kde_score(input_point, dataset, gaussian_kernel)
+        assert isinstance(kde_result, float), "KDE score should return a float."
+        print(f"KDE score test passed. Result: {kde_result}")
+    except Exception as e:
+        print(f"KDE score test failed. Error: {e}")
+
+    # Test joint_mvn_atypicality_score
+    try:
+        joint_mvn_result = joint_mvn_score(input_point, dataset)
+        assert isinstance(joint_mvn_result, float), "Joint MVN score should return a float."
+        print(f"Joint MVN score test passed. Result: {joint_mvn_result}")
+    except Exception as e:
+        print(f"Joint MVN score test failed. Error: {e}")
+
+    # Test joint_mvn_atypicality_score
+    try:
+        log_joint_mvn_result = log_joint_mvn_score(input_point, dataset)
+        assert isinstance(log_joint_mvn_result, float), "Joint MVN score should return a float."
+        print(f"Log Joint MVN score test passed. Result: {log_joint_mvn_result}")
+    except Exception as e:
+        print(f"Log Joint MVN score test failed. Error: {e}")
+
+    try:
+        lognormal_result = lognormal_score(input_point, dataset)
+        assert isinstance(lognormal_result, float), "Log Normal score should return a float."
+        print(f"Log Normal score test passed. Result: {lognormal_result}")
+    except Exception as e:
+        print(f"Log Normal score test failed. Error: {e}")
+
+    try:
+        gmm_result = gmm_score(input_point, dataset)
+        assert isinstance(gmm_result, float), "GMM score should return a float."
+        print(f"GMM score test passed. Result: {gmm_result}")
+    except Exception as e:
+        print(f"GMM score test failed. Error: {e}")
+
+    try:
+        jointlognormal_result = jointlognormal_score(input_point, dataset)
+        assert isinstance(jointlognormal_result, float), "Joint Lognormal score should return a float."
+        print(f"Joint Lognormal score test passed. Result: {jointlognormal_result}")
+    except Exception as e:
+        print(f"Joint Lognormal score test failed. Error: {e}")
+    try:
+        jointskewt_result = jointskewt_score(input_point, dataset)
+        assert isinstance(jointskewt_result, float), "Joint Skew T score should return a float."
+        print(f"Joint Skew T score test passed. Result: {jointskewt_result}")
+    except Exception as e:
+        print(f"Joint Skew T score test failed. Error: {e}")
+
+def compute_atypicality_scores(X_test, y_pred, X_fit, y_fit, score_type):
+    dataset = list(zip(X_fit, y_fit))
+    scores = []
+
+    for x_i, y_i_hat in tqdm(zip(X_test, y_pred)):
+        input_point = (x_i, y_i_hat)
+        if score_type == 'knn_score':
+            scores.append(knn_score(input_point, dataset))
+        elif score_type == 'kde_score':
+            scores.append(kde_score(input_point, dataset, gaussian_kernel))
+        elif score_type == 'log_joint_mvn_score':
+            scores.append(log_joint_mvn_score(input_point, dataset)) 
+        elif score_type == 'lognormal_score':
+            scores.append(lognormal_score(input_point, dataset)) 
+        elif score_type == 'gmm_score':
+            scores.append(gmm_score(input_point, dataset)) 
+        elif score_type == 'jointlognormal_score':
+            scores.append(jointlognormal_score(input_point, dataset)) 
+        elif score_type == 'jointskewt_score':
+            scores.append(jointskewt_score(input_point, dataset)) 
+        else:
+            raise ValueError(f"Invalid score type: {score_type}")
+
+    return scores
