@@ -5,6 +5,19 @@ from sklearn.linear_model import LinearRegression
 
 def plot_coverage_vs_atypicality(df, atypicality_score_title='KNN Score', atypicality_col='knn_score', lower_col='aar_knn_lower', upper_col='aar_knn_upper', 
                                  num_quantiles=5, ylim_bottom=None, ylim_top=None):
+    """
+    
+    
+    :param df: Dataframe of 
+    :param atypicality_score_title: Description
+    :param atypicality_col: Description
+    :param lower_col: Description
+    :param upper_col: Description
+    :param num_quantiles: Description
+    :param ylim_bottom: Description
+    :param ylim_top: Description
+    """
+    
     # Define quantile bins based on atypicality score
     df['quantile'] = pd.qcut(df[atypicality_col], num_quantiles, labels=False)
 
@@ -183,7 +196,7 @@ def plot_sampled_predictions(df, atypicality_col='log_joint_mvn_score', lower_co
     ax.set_xticks(x_positions)
     ax.set_xticklabels(sampled_df['quantile'].astype(str), rotation=0, fontsize=10)  # Show quantiles on x-axis
     ax.set_ylabel('Prediction Values')
-    ax.set_title('Sampled Predictions with Intervals — Log Joint MVN Score, CQR, GMM Data, AAPI ($\lambda=0.5$)')
+    ax.set_title(r'Sampled Predictions with Intervals — Log Joint MVN Score, CQR, GMM Data, AAPI ($\lambda=0.5$)')
     ax.legend(loc='upper right')
     plt.grid(axis='y', linestyle='dotted', alpha=0.6)
     

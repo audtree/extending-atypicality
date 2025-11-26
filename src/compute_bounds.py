@@ -1,26 +1,29 @@
 import numpy as np
 import pandas as pd
+from sklearn.metrics import r2_score, mean_squared_error
 
 import sys
 sys.path.append("../src")
 
 from atypicality import compute_atypicality_scores
-from data_generation_settings import load_and_split_data
-from fit_cp_models import fit_cp_model, predict_cp_intervals
+from data_generation_settings import generate_and_split_gaussian_data
+from fit_cp_models import fit_rf_cp_model, predict_cp_intervals
 
 # Calculate adjusted bounds
 def compute_adjusted_bounds(df, score_col, med_score, y_pred_lower_col, y_pred_upper_col, lower_col, upper_col, lam=1):
     """
-    Docstring for compute_adjusted_bounds
+    Given a dataframe with feature columns, creates new columns with adjusted bounds 
+    based on the inputted lambda value.
     
-    :param df: Description
-    :param score_col: Description
-    :param med_score: Description
-    :param y_pred_lower_col: Description
-    :param y_pred_upper_col: Description
-    :param lower_col: Description
-    :param upper_col: Description
-    :param lam: Description
+    :param df: Dataframe with features, atypicality scores
+    :param score_col: Column name for atypicality score (calculated for each point)
+    :param med_score: Median atypicality score
+    :param y_pred_lower_col: Existing column name for lower bound, to be adjusted by lambda
+    :param y_pred_upper_col: Existing column name for upper bound, to be adjusted by lambda
+    :param lower_col: Name of the lower bound column, to be created
+    :param upper_col: Name of the upper bound column, to be created
+    :param lam: Lambda value with which to scale the bounds (higher lambda means 
+                adjust for atypicality)
     """
     if lam is not None: 
         scaling_factor = 1 + lam * (df[score_col] - med_score) / med_score
@@ -71,13 +74,12 @@ def compute_coverage_by_quantile(df, atypicality_col, lower_col, upper_col, num_
 
     return pd.DataFrame(coverage_results, columns=['Quantile', 'Coverage_AAR', 'Coverage_Pred'])
 
-def run_calibration_for_score(atypicality_settings, n_splits=10):
+def run_calibration_for_score(atypicality_settings, make_and_split_data=generate_and_split_gaussian_data, fit_cp_model=fit_rf_cp_model, n_splits=10, test_atypicality=False):
     all_results = {f"{atyp_col}_lam{str(lam).replace('.', '')}": [] for atyp_col, _, _, lam in atypicality_settings}
 
     for i in range(n_splits):
         print(f"Running split {i+1}/{n_splits}")
-        # X_fit, X_calib, X_test, y_fit, y_calib, y_test, scaler = generate_and_split_data(random_seed=i)
-        X_fit, X_calib, X_test, y_fit, y_calib, y_test, scaler = load_and_split_data(random_seed=i)
+        X_fit, X_calib, X_test, y_fit, y_calib, y_test, scaler = make_and_split_data(random_seed=i)
 
         # Train CP model and get predictions
         lacp = fit_cp_model(X_fit, y_fit, X_calib, y_calib)
@@ -90,11 +92,22 @@ def run_calibration_for_score(atypicality_settings, n_splits=10):
 
         df['y_pred_lower'], df['y_pred_upper'] = y_pred_lower, y_pred_upper
 
+        r2 = r2_score(y_test, y_pred[:, 0])
+        mse = mean_squared_error(y_test, y_pred[:, 0])
+        print(f'R^2 score for split {i+1}: {r2:.4f}')
+        print(f'MSE score for split {i+1}: {mse:.4f}')
+
         for atyp_col, lower_col, upper_col, lam in atypicality_settings:
             med_score = np.median(compute_atypicality_scores(X_calib, y_calib, X_fit, y_fit, score_type=atyp_col))
             
             # Compute atypicality score for the current method
-            df[atyp_col] = compute_atypicality_scores(X_test, y_pred[:,0].flatten(), X_fit, y_fit, score_type=atyp_col)
+            if test_atypicality:
+                # if test_atypicality is True, use y_test instead of y_pred
+                df[atyp_col] = compute_atypicality_scores(X_test, y_test.flatten(), X_fit, y_fit, score_type=atyp_col)
+            else:
+                # Otherwise, use y_pred
+                df[atyp_col] = compute_atypicality_scores(X_test, y_pred[:,0].flatten(), X_fit, y_fit, score_type=atyp_col)
+
 
             # Compute adjusted bounds
             compute_adjusted_bounds(df, atyp_col, med_score, 'y_pred_lower', 'y_pred_upper', lower_col, upper_col, lam=lam)
