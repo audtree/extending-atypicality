@@ -74,12 +74,17 @@ def compute_coverage_by_quantile(df, atypicality_col, lower_col, upper_col, num_
 
     return pd.DataFrame(coverage_results, columns=['Quantile', 'Coverage_AAR', 'Coverage_Pred'])
 
-def run_calibration_for_score(atypicality_settings, make_and_split_data=generate_and_split_gaussian_data, fit_cp_model=fit_rf_cp_model, n_splits=10, test_atypicality=False):
+def run_calibration_for_score(atypicality_settings,
+                              make_and_split_data=generate_and_split_gaussian_data, 
+                              fit_cp_model=fit_rf_cp_model, 
+                              n_samples=5000,
+                              n_splits=10, 
+                              test_atypicality=False):
     all_results = {f"{atyp_col}_lam{str(lam).replace('.', '')}": [] for atyp_col, _, _, lam in atypicality_settings}
 
     for i in range(n_splits):
         print(f"Running split {i+1}/{n_splits}")
-        X_fit, X_calib, X_test, y_fit, y_calib, y_test, scaler = make_and_split_data(random_seed=i)
+        X_fit, X_calib, X_test, y_fit, y_calib, y_test, scaler = make_and_split_data(random_seed=i, n_samples=n_samples)
 
         # Train CP model and get predictions
         lacp = fit_cp_model(X_fit, y_fit, X_calib, y_calib)
@@ -97,6 +102,7 @@ def run_calibration_for_score(atypicality_settings, make_and_split_data=generate
         print(f'R^2 score for split {i+1}: {r2:.4f}')
         print(f'MSE score for split {i+1}: {mse:.4f}')
 
+        # Calculate lambda-adjusted coverage
         for atyp_col, lower_col, upper_col, lam in atypicality_settings:
             med_score = np.median(compute_atypicality_scores(X_calib, y_calib, X_fit, y_fit, score_type=atyp_col))
             
@@ -108,6 +114,60 @@ def run_calibration_for_score(atypicality_settings, make_and_split_data=generate
                 # Otherwise, use y_pred
                 df[atyp_col] = compute_atypicality_scores(X_test, y_pred[:,0].flatten(), X_fit, y_fit, score_type=atyp_col)
 
+            # Compute adjusted bounds
+            compute_adjusted_bounds(df, atyp_col, med_score, 'y_pred_lower', 'y_pred_upper', lower_col, upper_col, lam=lam)
+
+            # Compute coverage per quantile
+            coverage_df = compute_coverage_by_quantile(df, atyp_col, lower_col, upper_col)
+            all_results[f"{atyp_col}_lam{str(lam).replace('.', '')}"].append(coverage_df)
+
+    return all_results, df
+
+def compute_predicted_and_adjusted_bounds(atypicality_settings,
+                              make_and_split_data=generate_and_split_gaussian_data, 
+                              fit_cp_model=fit_rf_cp_model, 
+                              n_samples=5000,
+                              n_splits=10, 
+                              test_atypicality=False):
+    '''
+    For n_splits splits, generate a dataset with the given experimental settings. 
+    Fit a CP model to the training set, returning upper and lower prediction interval bounds. 
+    If lambda is not 0, compute atypicality scores for each point. Adjust the interval
+    bounds according to lambda. Return a dataset with atypicality 
+    '''
+    all_results = {f"{atyp_col}_lam{str(lam).replace('.', '')}": [] for atyp_col, _, _, lam in atypicality_settings}
+
+    for i in range(n_splits):
+        print(f"Running split {i+1}/{n_splits}")
+        X_fit, X_calib, X_test, y_fit, y_calib, y_test, scaler = make_and_split_data(random_seed=i, n_samples=n_samples)
+
+        # Train CP model and get predictions
+        lacp = fit_cp_model(X_fit, y_fit, X_calib, y_calib)
+        y_pred, y_pred_lower, y_pred_upper = predict_cp_intervals(lacp, X_test)
+
+        # Create DataFrame
+        df = pd.DataFrame(X_test, columns=[f'feature_{j}' for j in range(X_test.shape[1])])
+        df['y_test'], df['y_pred'] = y_test, y_pred[:, 0]
+        assert df['y_test'].notna().all(), "There are NaN values in df['y_test']!"
+
+        df['y_pred_lower'], df['y_pred_upper'] = y_pred_lower, y_pred_upper
+
+        r2 = r2_score(y_test, y_pred[:, 0])
+        mse = mean_squared_error(y_test, y_pred[:, 0])
+        print(f'R^2 score for split {i+1}: {r2:.4f}')
+        print(f'MSE score for split {i+1}: {mse:.4f}')
+
+        # Calculate lambda-adjusted coverage
+        for atyp_col, lower_col, upper_col, lam in atypicality_settings:
+            med_score = np.median(compute_atypicality_scores(X_calib, y_calib, X_fit, y_fit, score_type=atyp_col))
+            
+            # Compute atypicality score for the current method
+            if test_atypicality:
+                # if test_atypicality is True, use y_test instead of y_pred
+                df[atyp_col] = compute_atypicality_scores(X_test, y_test.flatten(), X_fit, y_fit, score_type=atyp_col)
+            else:
+                # Otherwise, use y_pred
+                df[atyp_col] = compute_atypicality_scores(X_test, y_pred[:,0].flatten(), X_fit, y_fit, score_type=atyp_col)
 
             # Compute adjusted bounds
             compute_adjusted_bounds(df, atyp_col, med_score, 'y_pred_lower', 'y_pred_upper', lower_col, upper_col, lam=lam)
@@ -116,4 +176,4 @@ def run_calibration_for_score(atypicality_settings, make_and_split_data=generate
             coverage_df = compute_coverage_by_quantile(df, atyp_col, lower_col, upper_col)
             all_results[f"{atyp_col}_lam{str(lam).replace('.', '')}"].append(coverage_df)
 
-    return all_results
+    return all_results, df

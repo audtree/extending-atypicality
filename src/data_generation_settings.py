@@ -23,18 +23,7 @@ def split_and_scale_data(X, y, test_size, calib_size, random_seed):
 
     return X_fit, X_calib, X_test, y_fit, y_calib, y_test, scaler
 
-def generate_and_split_linreg_data(random_seed, test_size=0.2, calib_size=0.2, noise=1):
-    np.random.seed(random_seed)
-    
-    # Generate data
-    X, y = make_regression(n_samples=5000, n_features=4, n_informative=2,
-                           random_state=random_seed, shuffle=False, noise=noise)
-
-    X_fit, X_calib, X_test, y_fit, y_calib, y_test, scaler = split_and_scale_data(X, y, test_size, calib_size, random_seed)
-
-    return X_fit, X_calib, X_test, y_fit, y_calib, y_test, scaler
-
-def generate_and_split_gaussian_data(random_seed, test_size=0.2, calib_size=0.2, noise_std=0.5):
+def generate_and_split_gaussian_data(random_seed, test_size=0.2, calib_size=0.2, noise_std=0.5, n_samples=500):
     """
     Corresponding atypicality score: Log Joint MVN
     """
@@ -49,7 +38,7 @@ def generate_and_split_gaussian_data(random_seed, test_size=0.2, calib_size=0.2,
     cov = eigenvectors @ np.diag(eigenvalues) @ eigenvectors.T
 
     # Sample from the multivariate Gaussian distribution
-    data = np.random.multivariate_normal(mean, cov, size=5000)
+    data = np.random.multivariate_normal(mean, cov, size=n_samples)
     X, y = data[:, :-1], data[:, -1]  # X: first 4 columns, y: last column
     
     # Add Gaussian noise to y
@@ -59,44 +48,40 @@ def generate_and_split_gaussian_data(random_seed, test_size=0.2, calib_size=0.2,
     
     return X_fit, X_calib, X_test, y_fit, y_calib, y_test, scaler
 
-def generate_and_split_lognormal_data(random_seed, test_size=0.2, calib_size=0.2, noise_std=0.9):
+def generate_and_split_lognormal_data(random_seed, test_size=0.2, calib_size=0.2, noise_std=0.9, n_samples=500):
     """
-    Corresponding atypicality score: lognormal_score. 
-    Generates only positive X values. 
+    Corresponding atypicality score: lognormal_score.
+    Generates only positive X values.
     """
     np.random.seed(random_seed)
-
-    # Define mean and randomly generate a symmetric positive semi-definite covariance matrix
-    mean = np.zeros(5)  # Mean vector
-    random_matrix = np.random.rand(5, 5)  # Generate random values
-    cov = (random_matrix + random_matrix.T) / 2  # Make it symmetric
-    np.fill_diagonal(cov, 1.0)  # Ensure diagonal values are 1.0 for variance
 
     # Define mean and covariance for the latent normal distribution
     mean = np.zeros(5)  # Mean vector (all zeros for simplicity)
     random_matrix = np.random.rand(5, 5)  # Generate random values
     cov = (random_matrix + random_matrix.T) / 2  # Make it symmetric
     np.fill_diagonal(cov, 1.0)  # Ensure diagonal values are 1.0 for variance
+    # cov = np.eye(5)
 
     # Generate latent normal features
-    X_normal = np.random.multivariate_normal(mean, cov, size=5000)
+    Z = np.random.multivariate_normal(mean, cov, size=n_samples)
 
-    # Ensure no zero or negative values in the log-normal transformation
-    X_normal_clipped = np.clip(X_normal, a_min=-10, a_max=None)  # Clip to avoid very large negative values
+    # Ensure no zero values in the log-normal transformation
+    Z_clipped = np.clip(Z, a_min=-10, a_max=None)  # Clip to avoid very large negative values
 
     # Transform to Log-Normal (exp function ensures strictly positive values)
-    X = np.exp(X_normal_clipped)
+    X = np.exp(Z_clipped)
     assert np.all(X > 0), "Error: X contains non-positive values"
 
     # Generate target variable y as a weighted sum of informative features + noise
-    weights = np.array([2.0, -1.5, 0.5, 0.0, 0.1])  # Only first two are informative
+    weights = np.array([2.0, 1.5, 0.5, 0.0, 0.1])  # Only first two are informative
     y = X @ weights + np.random.normal(0, noise_std, size=X.shape[0])  # Add Gaussian noise
-    
+    y = np.abs(y) # Correct any negative y values
+
     # Split into train, test, calib
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=test_size, random_state=random_seed)
     X_fit, X_calib, y_fit, y_calib = train_test_split(X_train, y_train, test_size=calib_size, random_state=random_seed)
 
-    # Scale features (since Log-Normal data is highly skewed)
+    # Scale features (makes standard deviation 1)
     scaler = StandardScaler(with_mean=False)
     X_fit = scaler.fit_transform(X_fit)
     X_calib = scaler.transform(X_calib)
@@ -108,13 +93,13 @@ def generate_and_split_lognormal_data(random_seed, test_size=0.2, calib_size=0.2
 
     return X_fit, X_calib, X_test, y_fit, y_calib, y_test, scaler
 
-def generate_and_split_gmm_data(random_seed, test_size=0.2, calib_size=0.2, n_components=3, n_features=4):
+def generate_and_split_gmm_data(random_seed, test_size=0.2, calib_size=0.2, n_components=3, n_features=4, n_samples=500):
     """
     Corresponding atypicality score: gmm_score. 
     """
     np.random.seed(random_seed)
 
-    n_samples = 5000
+    n_samples = n_samples
     means = np.random.uniform(-5, 5, size=(n_components, n_features))
     covariances = np.array([np.random.rand(n_features, n_features) for _ in range(n_components)])
     mixing_proportions = np.random.dirichlet(np.ones(n_components), size=1).flatten()
@@ -137,134 +122,6 @@ def generate_and_split_gmm_data(random_seed, test_size=0.2, calib_size=0.2, n_co
     y = np.dot(X, beta) + noise
 
     X_fit, X_calib, X_test, y_fit, y_calib, y_test, scaler = split_and_scale_data(X, y, test_size, calib_size, random_seed)
-
-    return X_fit, X_calib, X_test, y_fit, y_calib, y_test, scaler
-
-def generate_and_split_weibull_data(random_seed, test_size=0.2, calib_size=0.2, noise_std=0.9):
-    np.random.seed(random_seed)
-
-    # Define mean and randomly generate a symmetric positive semi-definite covariance matrix
-    mean = np.zeros(5)  # Mean vector
-    random_matrix = np.random.rand(5, 5)  # Generate random values
-    cov = (random_matrix + random_matrix.T) / 2  # Make it symmetric
-    np.fill_diagonal(cov, 1.0)  # Ensure diagonal values are 1.0 for variance
-
-    # Define mean and covariance for the latent normal distribution
-    mean = np.zeros(5)  # Mean vector (all zeros for simplicity)
-    random_matrix = np.random.rand(5, 5)  # Generate random values
-    cov = (random_matrix + random_matrix.T) / 2  # Make it symmetric
-    np.fill_diagonal(cov, 1.0)  # Ensure diagonal values are 1.0 for variance
-
-    # Generate latent normal features
-    X_normal = np.random.multivariate_normal(mean, cov, size=5000)
-
-    # Ensure no zero or negative values in the log-normal transformation
-    X_normal_clipped = np.clip(X_normal, a_min=-10, a_max=None)  # Clip to avoid very large negative values
-
-    # Apply Weibull transformation (ensuring positive values)
-    X = np.random.weibull(2, size=X_normal.shape) * np.exp(X_normal / 2) # TODO; shape is 2
-    assert np.all(X > 0), "Error: X contains non-positive values"
-
-    # Generate target variable y as a weighted sum of informative features + noise
-    weights = np.array([2.0, -1.5, 0.5, 0.0, 0.1])  # Only first two are informative
-    y = X @ weights + np.random.normal(0, noise_std, size=X.shape[0])  # Add Gaussian noise
-    
-    # Split into train, test, calib
-    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=test_size, random_state=random_seed)
-    X_fit, X_calib, y_fit, y_calib = train_test_split(X_train, y_train, test_size=calib_size, random_state=random_seed)
-
-    # Scale features (since Log-Normal data is highly skewed)
-    scaler = StandardScaler(with_mean=False)
-    X_fit = scaler.fit_transform(X_fit)
-    X_calib = scaler.transform(X_calib)
-    X_test = scaler.transform(X_test)
-
-    assert np.all(X_train > 0), "Error: X_train contains non-positive values"
-    assert np.all(X_test > 0), "Error: X_test contains non-positive values"
-    assert np.all(X_fit > 0), "Error: X_test contains non-positive values"
-
-    return X_fit, X_calib, X_test, y_fit, y_calib, y_test, scaler
-
-def generate_and_split_poslognormal_data(random_seed, test_size=0.2, calib_size=0.2, noise_std=0.9):
-    """
-    Corresponding atypicality score: lognormal_score. 
-    Generates only positive X values. 
-    """
-    np.random.seed(random_seed)
-
-    # Define mean and randomly generate a symmetric positive semi-definite covariance matrix
-    mean = np.zeros(5)  # Mean vector
-    random_matrix = np.random.rand(5, 5)  # Generate random values
-    cov = (random_matrix + random_matrix.T) / 2  # Make it symmetric
-    np.fill_diagonal(cov, 1.0)  # Ensure diagonal values are 1.0 for variance
-
-    # Define mean and covariance for the latent normal distribution
-    mean = np.zeros(5)  # Mean vector (all zeros for simplicity)
-    random_matrix = np.random.rand(5, 5)  # Generate random values
-    cov = (random_matrix + random_matrix.T) / 2  # Make it symmetric
-    np.fill_diagonal(cov, 1.0)  # Ensure diagonal values are 1.0 for variance
-
-    # Generate latent normal features
-    X_normal = np.random.multivariate_normal(mean, cov, size=5000)
-
-    # Ensure no zero or negative values in the log-normal transformation
-    X_normal_clipped = np.clip(X_normal, a_min=-10, a_max=None)  # Clip to avoid very large negative values
-
-    # Transform to Log-Normal (exp function ensures strictly positive values)
-    X = np.exp(X_normal_clipped)
-    assert np.all(X > 0), "Error: X contains non-positive values"
-
-    # Generate target variable y as a weighted sum of informative features + noise
-    weights = np.array([2.0, -1.5, 0.5, 0.0, 0.1])  # Only first two are informative
-    y = X @ weights + np.random.normal(0, noise_std, size=X.shape[0])  # Add Gaussian noise
-
-    min_y = np.min(y)
-    if min_y <= 0:
-        y += abs(min_y) + 1e-3  # Shift all values up slightly
-    
-    # Split into train, test, calib
-    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=test_size, random_state=random_seed)
-    X_fit, X_calib, y_fit, y_calib = train_test_split(X_train, y_train, test_size=calib_size, random_state=random_seed)
-
-    # Scale features (since Log-Normal data is highly skewed)
-    scaler = StandardScaler(with_mean=False)
-    X_fit = scaler.fit_transform(X_fit)
-    X_calib = scaler.transform(X_calib)
-    X_test = scaler.transform(X_test)
-
-    assert np.all(X_train > 0), "Error: X_train contains non-positive values"
-    assert np.all(X_test > 0), "Error: X_test contains non-positive values"
-    assert np.all(X_fit > 0), "Error: X_test contains non-positive values"
-
-    return X_fit, X_calib, X_test, y_fit, y_calib, y_test, scaler
-
-def generate_and_split_linreg_2features_data(random_seed, test_size=0.2, calib_size=0.2, noise=1):
-    np.random.seed(random_seed)
-    
-    # Generate X1, X2 as normal distributions
-    n_samples = 5000
-    X1 = np.random.normal(loc=0, scale=1, size=n_samples)  # Normal distribution for X1
-    X2 = np.random.normal(loc=0, scale=1, size=n_samples)  # Normal distribution for X2
-    
-    # Define the linear relationship for Y
-    beta_0 = 0
-    beta_1 = 2
-    beta_2 = 3
-    y = beta_0 + beta_1 * X1 + beta_2 * X2 + noise * np.random.randn(n_samples)  # Add noise
-    
-    # Stack X1 and X2 into one feature matrix X
-    X = np.column_stack((X1, X2))
-    X_fit, X_calib, X_test, y_fit, y_calib, y_test, scaler = split_and_scale_data(X, y, test_size, calib_size, random_seed)
-
-    # Visualize X and Y
-    plt.figure(figsize=(10, 6))
-    sc = plt.scatter(X1, X2, c=y, cmap='viridis', alpha=0.5)
-    plt.colorbar(sc, label='Y values')
-    plt.title('Scatter plot of X1 vs X2 with Y as color')
-    plt.xlabel('X1')
-    plt.ylabel('X2')
-    plt.savefig(f'/Users/audreyxychang/Downloads/generated-linear-2feature-data.png')
-    plt.show()
 
     return X_fit, X_calib, X_test, y_fit, y_calib, y_test, scaler
 

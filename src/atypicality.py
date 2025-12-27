@@ -6,14 +6,13 @@ import hashlib
 import scipy.stats as stats
 
 from sklearn.neighbors import NearestNeighbors
-from scipy.stats import multivariate_normal, norm, multivariate_t
+from scipy.stats import multivariate_normal, norm, multivariate_t, lognorm
 from sklearn.linear_model import LinearRegression
 
 from sklearn.mixture import GaussianMixture
 from sklearn.covariance import LedoitWolf, ShrunkCovariance
 from sklearn.gaussian_process.kernels import RBF, ConstantKernel as C
 from tqdm import tqdm
-
 
 def hash_dataset(dataset):
     """Create a unique hash for a dataset to use as a cache key."""
@@ -222,19 +221,20 @@ def log_joint_mvn_score(input_point, dataset):
 # Lognormal atypicality score
 lognormal_cache = {}
 
+print("lognorm in globals:", "lognorm" in globals())
 def get_lognormal_params(dataset):
-    """Fit a GMM and return its parameters."""
+    """ Estimate weights, latent normal distribution parameters for X, and lognormal distribution parameters for Y."""
     # Extract feature vectors (X) and target values (y) from the dataset
-    X = np.array([point[0] for point in dataset])  
-    y = np.array([point[1] for point in dataset]) 
+    X = np.array([point[0] for point in dataset])
+    y = np.array([point[1] for point in dataset])
 
     # Estimate sigma and mu_X of the latent normal distribution
-    X_normal = np.log(X)  # Transform to normal space
-    mu_X = X_normal.mean(axis=0)
+    Z = np.log(X)  # Transform to normal space
+    mu_Z = Z.mean(axis=0)
 
     lw = LedoitWolf()
-    lw.fit(X_normal)
-    Sigma_X = lw.covariance_
+    lw.fit(Z)
+    Sigma_Z = lw.covariance_
 
     # Estimate weights of Y = Xw + error using least squares
     w = np.linalg.inv(X.T @ X) @ X.T @ y
@@ -242,22 +242,14 @@ def get_lognormal_params(dataset):
     # Estimate residual variance
     sigma_sq = np.mean((y - X @ w) ** 2)
 
-    # Compute posterior covariance
-    # To ensure Sigma_X_given_Y is positive semi-denfinite, add epsilon to the diagnoal 
-    Sigma_X_given_Y = Sigma_X - (Sigma_X @ np.outer(w, w) @ Sigma_X) / sigma_sq
-    epsilon = max(1e-5, np.max(np.diag(Sigma_X_given_Y)) * 1e-5)  # Scale by largest variance
-    Sigma_X_given_Y += epsilon  * np.eye(Sigma_X_given_Y.shape[0])
+    # Calculate parameters of estimated lognormal distribution of Y
+    ylognorm_shape, ylognorm_loc, ylognorm_scale = lognorm.fit(y, floc=0)
 
-    # Eigenvalue Clipping to ensure that our covariance matrix is positive semi-definite
-    eigvals, eigvecs = np.linalg.eigh(Sigma_X_given_Y)
-    eigvals[eigvals < epsilon] = epsilon  # Replace negative eigenvalues with a small positive number
-    Sigma_X_given_Y = eigvecs @ np.diag(eigvals) @ eigvecs.T
-
-    return mu_X, Sigma_X, w, sigma_sq, Sigma_X_given_Y
+    return mu_Z, Sigma_Z, w, sigma_sq, ylognorm_shape, ylognorm_loc, ylognorm_scale
 
 def lognormal_score(input_point, dataset):
     """
-    Calculate the LogNormal Atypicality Score, which is P(X|Y) where X is distributed LogNormal and Y is a linear function of X plus Gaussian Noise. 
+    Calculate the LogNormal Atypicality Score, which is P(X|Y) where X is distributed LogNormal and Y is a linear function of X plus Gaussian Noise.
 
     Parameters:
         input_point (tuple): A tuple (x_i, y_i_hat) where x_i is the feature vector and y_i_hat is the predicted output.
@@ -267,46 +259,37 @@ def lognormal_score(input_point, dataset):
         float: Negative Log LogNormal Atypicality Score.
 
     Note:
-        Important to note that because we're working with continuous r.v.'s, we are not using P(X|Y). 
-        We're really using f(x), which is not bounded by [0,1] and can take on any positive real. Thus log(f(x|y)) can be greater than 1. 
+        Important to note that because we're working with continuous r.v.'s, we are not using P(X|Y).
+        We're really using f(x), which is not bounded by [0,1] and can take on any positive real. Thus log(f(x|y)) can be greater than 1.
     """
-    x_i, y_i_hat = input_point 
+    x_i, y_i_hat = input_point
     y_i_hat = np.array(y_i_hat).reshape(-1) # Ensure y_i_hat is a 1D array (shape: (1,))
 
-    # Load or compute GMM parameters
+    # Load or compute LogNormal parameters
     dataset_hash = hash_dataset(dataset)
     if dataset_hash not in lognormal_cache:
         lognormal_cache[dataset_hash] = get_lognormal_params(dataset)
-    mu_X, Sigma_X, w, sigma_sq, Sigma_X_given_Y = lognormal_cache[dataset_hash]
+    mu_Z, Sigma_Z, w, sigma_sq, ylognorm_shape, ylognorm_loc, ylognorm_scale = lognormal_cache[dataset_hash]
 
-    # Compute posterior mean and covariance
-    mu_X_given_Y = mu_X + Sigma_X @ w * (y_i_hat - w.T @ np.exp(mu_X)) / (w.T @ Sigma_X @ w + sigma_sq) # TODO: check these equations! Eessentially, my mahalonobis distance is too big. the distance between the mean and x is very large... are we calculating this mu correctly? 
+    # 1. Calcualte f_Y|X(y|x)
+    # Compute conditional density
+    y_given_x_density = norm.pdf(y_i_hat, loc= x_i @ w, scale=np.sqrt(sigma_sq))
 
+    # 2. Calculate f_X(x)
     # Convert x to normal space
-    x_normal = np.log(x_i)
+    z_i = np.log(x_i)
 
-    # Compute density using multivariate normal PDF
-    log_mvn_density = multivariate_normal.logpdf(x_normal, mean=mu_X_given_Y, cov=Sigma_X_given_Y)
-    lognormal_score = - (log_mvn_density - np.log(np.prod(x_i)))
-    
-    # Truncate values if less than 0 (means the point is very typical)
-    lognormal_score = max(lognormal_score.item(), 0.0)
+    # Use MVN transformation
+    z_mvn_density = multivariate_normal.pdf(z_i, mean=mu_Z, cov=Sigma_Z)
 
-    # Check if lognormal_score is inf or -inf
-    if np.isinf(lognormal_score):
-        print("\nWARNING: lognormal_score is", lognormal_score)
-        print("Intermediate values:")
-        print(f"x_i: {x_i}")
-        print(f"y_i_hat: {y_i_hat}")
-        print(f"mu_X: {mu_X}")
-        print(f"Sigma_X: {Sigma_X}")
-        print(f"w: {w}")
-        print(f"sigma_sq: {sigma_sq}")
-        print(f"Sigma_X_given_Y: {Sigma_X_given_Y}")
-        print(f"mu_X_given_Y: {mu_X_given_Y}")
-        print(f"x_normal (log of x_i): {x_normal}")
-        print(f"log_mvn_density: {log_mvn_density}")
-        print(f"np.log(np.prod(x_i)): {np.log(np.prod(x_i))}")
+    # Use scaling with Jacobian
+    x_density = z_mvn_density * (1 / np.prod(x_i))
+
+    # 3. Estimate f_Y(y):
+    y_density = lognorm.pdf(y_i_hat, ylognorm_shape, ylognorm_loc, ylognorm_scale)
+
+    # Assemble bayes
+    lognormal_score = y_given_x_density*x_density/y_density
 
     return lognormal_score
 
@@ -495,85 +478,6 @@ def jointskewt_score(input_point, dataset):
     jointskewt_score = -log_t_density
 
     return max(float(jointskewt_score), 0.0)  # Ensure scalar output
-
-def test_scores():
-    """
-    Test the knn_score, kde_score, and joint_mvn_atypicality_score, log_joint_mvn_score functions
-    using synthetic data.
-    """
-
-    # Define synthetic dataset
-    dataset = [
-        (np.array([1.0, 2.0]), 3.5),
-        (np.array([3.0, 1.0]), 2.5),
-        (np.array([0.5, 1.5]), 3.7),
-        (np.array([1.5, 2.5]), 3.2),
-        (np.array([2.0, 3.0]), 4.0)
-    ]
-
-    # Define input point
-    input_point = (np.array([1.0, 2.0]), 3.4)
-
-    # Test knn_score
-    try:
-        k = 3  # Number of neighbors for KNN
-        knn_result = knn_score(input_point, dataset, k)
-        assert isinstance(knn_result, float), "KNN score should return a float."
-        print(f"KNN score test passed. Result: {knn_result}")
-    except Exception as e:
-        print(f"KNN score test failed. Error: {e}")
-
-    # Test kde_score
-    try:
-        kde_bandwidth = 0.5  # Bandwidth for KDE
-        kde_result = kde_score(input_point, dataset, gaussian_kernel)
-        assert isinstance(kde_result, float), "KDE score should return a float."
-        print(f"KDE score test passed. Result: {kde_result}")
-    except Exception as e:
-        print(f"KDE score test failed. Error: {e}")
-
-    # Test joint_mvn_atypicality_score
-    try:
-        joint_mvn_result = joint_mvn_score(input_point, dataset)
-        assert isinstance(joint_mvn_result, float), "Joint MVN score should return a float."
-        print(f"Joint MVN score test passed. Result: {joint_mvn_result}")
-    except Exception as e:
-        print(f"Joint MVN score test failed. Error: {e}")
-
-    # Test joint_mvn_atypicality_score
-    try:
-        log_joint_mvn_result = log_joint_mvn_score(input_point, dataset)
-        assert isinstance(log_joint_mvn_result, float), "Joint MVN score should return a float."
-        print(f"Log Joint MVN score test passed. Result: {log_joint_mvn_result}")
-    except Exception as e:
-        print(f"Log Joint MVN score test failed. Error: {e}")
-
-    try:
-        lognormal_result = lognormal_score(input_point, dataset)
-        assert isinstance(lognormal_result, float), "Log Normal score should return a float."
-        print(f"Log Normal score test passed. Result: {lognormal_result}")
-    except Exception as e:
-        print(f"Log Normal score test failed. Error: {e}")
-
-    try:
-        gmm_result = gmm_score(input_point, dataset)
-        assert isinstance(gmm_result, float), "GMM score should return a float."
-        print(f"GMM score test passed. Result: {gmm_result}")
-    except Exception as e:
-        print(f"GMM score test failed. Error: {e}")
-
-    try:
-        jointlognormal_result = jointlognormal_score(input_point, dataset)
-        assert isinstance(jointlognormal_result, float), "Joint Lognormal score should return a float."
-        print(f"Joint Lognormal score test passed. Result: {jointlognormal_result}")
-    except Exception as e:
-        print(f"Joint Lognormal score test failed. Error: {e}")
-    try:
-        jointskewt_result = jointskewt_score(input_point, dataset)
-        assert isinstance(jointskewt_result, float), "Joint Skew T score should return a float."
-        print(f"Joint Skew T score test passed. Result: {jointskewt_result}")
-    except Exception as e:
-        print(f"Joint Skew T score test failed. Error: {e}")
 
 def compute_atypicality_scores(X_test, y_pred, X_fit, y_fit, score_type):
     dataset = list(zip(X_fit, y_fit))
