@@ -13,7 +13,7 @@ from compute_bounds import compute_adjusted_bounds, compute_coverage_by_quantile
 
 
 def calc_lam_aar_intervals(atyp_col, atypicality_settings, make_and_split_data=generate_and_split_gaussian_data, 
-                           fit_cp_model=fit_rf_cp_model, n_splits=10, test_atypicality=False, random_seed_start=0):
+                           fit_cp_model=fit_rf_cp_model, n_splits=10, true_atypicality=False, random_seed_start=0):
     
     all_results = {f"{atyp_col}_lam{str(lam).replace('.', '-')}": [] for atyp_col, _, _, lam in atypicality_settings}
 
@@ -38,8 +38,8 @@ def calc_lam_aar_intervals(atyp_col, atypicality_settings, make_and_split_data=g
         med_score = np.median(compute_atypicality_scores(X_calib, y_calib, X_fit, y_fit, score_type=atyp_col))
             
         # Compute atypicality score for the current method
-        if test_atypicality:
-            # if test_atypicality is True, use y_test instead of y_pred
+        if true_atypicality:
+            # if true_atypicality is True, use y_test instead of y_pred
             df[atyp_col] = compute_atypicality_scores(X_test, y_test.flatten(), X_fit, y_fit, score_type=atyp_col)
         else:
             # Otherwise, use y_pred
@@ -196,7 +196,7 @@ def print_notable_lambdas(all_results):
     print(f"Lambda with lowest MSE: {lowest_mse_mean_lambda} with MSE {lowest_mse_mean_value}")
 
 def lambda_hyperparameter_tuning(atyp_col='log_joint_mvn_score', make_and_split_data=generate_and_split_gmm_data, 
-                                 fit_cp_model=fit_rf_cp_model, n_splits=2, test_atypicality=True, hyperparameter_tuning=True,
+                                 fit_cp_model=fit_rf_cp_model, n_splits=2, true_atypicality=True, hyperparameter_tuning=True,
                                  best_lambda=0):
     """
     Important: calculates metrics on y_test. When used for hyperparameter tuning, this 
@@ -228,7 +228,7 @@ def lambda_hyperparameter_tuning(atyp_col='log_joint_mvn_score', make_and_split_
     # Calculate n_splits replication splits for each lambda and above settings
     lambda_results = calc_lam_aar_intervals(atyp_col=atyp_col, atypicality_settings=atypicality_settings, 
                                             make_and_split_data=make_and_split_data, fit_cp_model=fit_cp_model, 
-                                            n_splits=n_splits, test_atypicality=test_atypicality, 
+                                            n_splits=n_splits, true_atypicality=true_atypicality, 
                                             random_seed_start=random_seed_start)
 
     # Calculate metrics for each lambda across replication splits

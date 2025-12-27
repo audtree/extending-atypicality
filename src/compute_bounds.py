@@ -16,7 +16,8 @@ def generate_base_cp_intervals_and_atypicality(
         score_type,
         n_samples,
         random_seed,
-        test_atypicality):
+        true_atypicality):
+    
     X_fit, X_calib, X_test, y_fit, y_calib, y_test, _ = \
         make_and_split_data(random_seed=random_seed, n_samples=n_samples)
 
@@ -29,7 +30,7 @@ def generate_base_cp_intervals_and_atypicality(
     med_score = np.median(calib_scores)
 
     # Test scores
-    y_for_score = y_test if test_atypicality else y_pred[:, 0]
+    y_for_score = y_test if true_atypicality else y_pred[:, 0]
     scores = compute_atypicality_scores(
         X_test, y_for_score, X_fit, y_fit, score_type=score_type)
 
@@ -77,7 +78,7 @@ def evaluate_lambda_adjusted_interval_coverage(
         fit_cp_model,
         n_samples,
         n_splits,
-        test_atypicality,
+        true_atypicality,
         num_quantiles):
     
     lambdas_by_score = group_lambdas_by_score(atypicality_settings)
@@ -92,7 +93,7 @@ def evaluate_lambda_adjusted_interval_coverage(
                 score_type,
                 n_samples,
                 split,
-                test_atypicality)
+                true_atypicality)
 
             y_test = base_df["y_test"].values
             y_pred = base_df["y_pred"].values
@@ -194,7 +195,7 @@ def evaluate_lambda_adjusted_interval_coverage(
 #                               fit_cp_model=fit_rf_cp_model, 
 #                               n_samples=5000,
 #                               n_splits=10, 
-#                               test_atypicality=False):
+#                               true_atypicality=False):
 #     all_results = {f"{atyp_col}_lam{str(lam).replace('.', '')}": [] for atyp_col, _, _, lam in atypicality_settings}
 
 #     for i in range(n_splits):
@@ -222,8 +223,8 @@ def evaluate_lambda_adjusted_interval_coverage(
 #             med_score = np.median(compute_atypicality_scores(X_calib, y_calib, X_fit, y_fit, score_type=atyp_col))
             
 #             # Compute atypicality score for the current method
-#             if test_atypicality:
-#                 # if test_atypicality is True, use y_test instead of y_pred
+#             if true_atypicality:
+#                 # if true_atypicality is True, use y_test instead of y_pred
 #                 df[atyp_col] = compute_atypicality_scores(X_test, y_test.flatten(), X_fit, y_fit, score_type=atyp_col)
 #             else:
 #                 # Otherwise, use y_pred
@@ -244,7 +245,7 @@ def evaluate_lambda_adjusted_interval_coverage(
 #                               n_samples=5000,
 #                               n_splits=10, 
 #                               lam=0,
-#                               test_atypicality=False):
+#                               true_atypicality=False):
 #     '''
 #     For n_splits splits, generate a dataset with the given experimental settings. 
 #     Fit a CP model to the training set, returning upper and lower prediction interval bounds. 
@@ -278,8 +279,8 @@ def evaluate_lambda_adjusted_interval_coverage(
 #             med_score = np.median(compute_atypicality_scores(X_calib, y_calib, X_fit, y_fit, score_type=atyp_col))
             
 #             # Compute atypicality score for the current method
-#             if test_atypicality:
-#                 # if test_atypicality is True, use y_test instead of y_pred
+#             if true_atypicality:
+#                 # if true_atypicality is True, use y_test instead of y_pred
 #                 df[atyp_col] = compute_atypicality_scores(X_test, y_test.flatten(), X_fit, y_fit, score_type=atyp_col)
 #             else:
 #                 # Otherwise, use y_pred

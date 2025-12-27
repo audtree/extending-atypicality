@@ -3,84 +3,106 @@ import numpy as np
 import matplotlib.pyplot as plt
 from sklearn.linear_model import LinearRegression
 
-def plot_coverage_vs_atypicality(df, atypicality_score_title='KNN Score', atypicality_col='knn_score', lower_col='aar_knn_lower', upper_col='aar_knn_upper', 
-                                 num_quantiles=5, ylim_bottom=None, ylim_top=None):
+data_generation_mapping = {
+    "generate_and_split_gaussian_data": "MVN Data Generation Setting",
+    "generate_and_split_lognormal_data": "Log Normal Data Generation Setting",
+    "generate_and_split_gmm_data": "GMM Data Generation Setting"
+}
+
+atypicality_score_mapping = {
+    'knn_score': 'KNN',
+    'kde_score': 'KDE',
+    'lognormal_score': 'Log\nNormal',
+    'gmm_score': 'GMM',
+    'logjointmvn_score': 'Log Joint\nMVN'
+}
+
+cp_model_mapping = {
+    "fit_rf_cp_model": "RFCP",
+    "fit_gaussian_cp_model": "NNCP",
+    "fit_conformal_cp_model": "CQR"
+}
+
+# Desired order for x-axis / plotting
+desired_score_order = ["KNN", "KDE", "Log Joint\nMVN", "GMM", "Log\nNormal"]
+
+def plot_betagrouped_by_atypicality(beta_df, outputfile: str):
     """
-    
-    
-    :param df: Dataframe of 
-    :param atypicality_score_title: Description
-    :param atypicality_col: Description
-    :param lower_col: Description
-    :param upper_col: Description
-    :param num_quantiles: Description
-    :param ylim_bottom: Description
-    :param ylim_top: Description
+    Plots regression slopes (Mean Beta) with error bars (Std Beta), 
+    grouped by atypicality score and CP model, faceted by data generation setting.
     """
-    
-    # Define quantile bins based on atypicality score
-    df['quantile'] = pd.qcut(df[atypicality_col], num_quantiles, labels=False)
+    # Map CP models, data generation, and atypicality scores
+    beta_df["CP Model Label"] = beta_df["CP Model"].map(cp_model_mapping)
+    beta_df["Data Generation Label"] = beta_df["Data Generation Setting"].map(data_generation_mapping)
+    beta_df["Atypicality Label"] = beta_df["Atypicality Score"].map(atypicality_score_mapping)
 
-    coverage_results = []
+    fig, axes = plt.subplots(1, 3, figsize=(11, 4), sharey=True)
 
-    for q in range(num_quantiles):
-        quantile_df = df[df['quantile'] == q]
-        
-        # Compute coverage for both sets of bounds
-        coverage_aar = ((quantile_df[lower_col] <= quantile_df['y_test']) & (quantile_df['y_test'] <= quantile_df[upper_col])).mean()
-        coverage_pred = ((quantile_df['y_pred_lower'] <= quantile_df['y_test']) & (quantile_df['y_test'] <= quantile_df['y_pred_upper'])).mean()
+    # Unique CP models and colors
+    cp_models = beta_df["CP Model Label"].unique()
+    cp_colors = sns.color_palette("Set1", len(cp_models))
+    cp_color_map = {cp: cp_colors[i] for i, cp in enumerate(cp_models)}
 
-        coverage_results.append((q, coverage_aar, coverage_pred))
+    # Unique data generation settings and titles
+    data_generation_settings = beta_df["Data Generation Label"].unique()
 
-    # Convert results to DataFrame for easy plotting
-    coverage_df = pd.DataFrame(coverage_results, columns=['Quantile', 'Coverage_AAR', 'Coverage_Pred'])
+    for ax, data_gen in zip(axes, data_generation_settings):
+        subset = beta_df[beta_df["Data Generation Label"] == data_gen]
 
-    # Plot
-    plt.figure(figsize=(8, 5))
-    plt.plot(coverage_df['Quantile'], coverage_df['Coverage_AAR'], marker='o', linestyle='-', label='AAR Bounds')
-    plt.plot(coverage_df['Quantile'], coverage_df['Coverage_Pred'], marker='s', linestyle='--', label='Predicted Bounds')
+        # atypicality_scores = sorted(subset["Atypicality Label"].unique())
+        atypicality_scores = [s for s in desired_score_order if s in subset["Atypicality Label"].values]
+        x_positions = np.arange(len(atypicality_scores))
 
-    plt.xlabel(f'{atypicality_score_title} Atypicality Quantile')
-    plt.ylabel('Coverage')
-    plt.title(f'Coverage vs. {atypicality_score_title} Atypicality Quantile')
-    plt.legend()
-    plt.grid(True)
+        # Small offsets to separate CP models within the same group
+        offsets = np.linspace(-0.15, 0.15, len(cp_models))
 
-    # Set y-axis limits if specified
-    if ylim_bottom is not None or ylim_top is not None:
-        plt.ylim(ylim_bottom, ylim_top)
+        for i, atypicality in enumerate(atypicality_scores):
+            group_subset = subset[subset["Atypicality Label"] == atypicality]
 
-    plt.show()
+            for j, cp_model in enumerate(cp_models):
+                df_point = group_subset[group_subset["CP Model Label"] == cp_model]
+                if df_point.empty:
+                    continue
 
+                mean_beta = df_point["Mean Beta"].values[0]
+                std_beta = df_point["Std Beta"].values[0]
+                color = cp_color_map[cp_model]
 
-def plot_efficiency_vs_atypicality(df, atypicality_score_title='KNN Score', atypicality_col='knn_score', lower_col='aar_knn_lower', upper_col='aar_knn_upper', num_quantiles=5):
-    # Define quantile bins based on atypicality score
-    df['quantile'] = pd.qcut(df[atypicality_col], num_quantiles, labels=False)
+                # Plot error bars and points
+                ax.errorbar(
+                    x_positions[i] + offsets[j], mean_beta, yerr=std_beta,
+                    fmt='o', capsize=5, color=color, markersize=8, elinewidth=1.5,
+                    alpha=0.5
+                )
+                ax.plot(
+                    x_positions[i] + offsets[j], mean_beta,
+                    marker='o', color=color, markersize=8, alpha=1
+                )
 
-    efficiency_results = []
+        # Customize x-axis and plot
+        ax.set_xticks(x_positions)
+        ax.set_xticklabels(atypicality_scores, rotation=0, fontsize=11)
+        ax.axhline(0, color='r', linestyle='--', alpha=0.5)
+        ax.set_title(data_gen)
+        ax.grid(True, linestyle="dotted", alpha=0.6)
+        ax.tick_params(axis='both', colors='grey')
+        for spine in ax.spines.values():
+            spine.set_edgecolor('grey')
 
-    for q in range(num_quantiles):
-        quantile_df = df[df['quantile'] == q]
-        
-        # Compute the average interval length for both sets of bounds
-        efficiency_aar = (quantile_df[upper_col] - quantile_df[lower_col]).mean()
-        efficiency_pred = (quantile_df['y_pred_upper'] - quantile_df['y_pred_lower']).mean()
+    axes[0].set_ylabel("Slope (β)")
 
-        efficiency_results.append((q, efficiency_aar, efficiency_pred))
+    fig.text(0.5, 0.07, 'Atypicality Score', ha='center', va='center')
 
-    # Convert results to DataFrame for easy plotting
-    efficiency_df = pd.DataFrame(efficiency_results, columns=['Quantile', 'Efficiency_AAR', 'Efficiency_Pred'])
+    # Legend for CP models
+    handles = [plt.Line2D([0], [0], marker='o', color=color, markersize=8, linestyle='')
+               for color in cp_color_map.values()]
+    labels = cp_models  # or a mapping to nicer labels
+    fig.legend(handles, labels, title="CP Model",
+               loc="lower center", ncol=3, bbox_to_anchor=(0.5, -0.1))
 
-    # Plot
-    plt.figure(figsize=(8, 5))
-    plt.plot(efficiency_df['Quantile'], efficiency_df['Efficiency_AAR'], marker='o', linestyle='-', label='AAR Bounds')
-    plt.plot(efficiency_df['Quantile'], efficiency_df['Efficiency_Pred'], marker='s', linestyle='--', label='Predicted Bounds')
-
-    plt.xlabel(f'{atypicality_score_title} Atypicality Quantile')
-    plt.ylabel('Efficiency (Average Interval Length)')
-    plt.title(f'Efficiency vs. {atypicality_score_title} Atypicality Quantile')
-    plt.legend()
-    plt.grid(True)
+    plt.ylim(-0.14, 0.14)
+    plt.tight_layout(rect=[0, 0.1, 1, 1])
+    plt.savefig("../plots/" + outputfile)
     plt.show()
 
 def plot_coverage_across_atypicality_quantile(
@@ -130,6 +152,53 @@ def plot_coverage_across_atypicality_quantile(
 
     plt.show()
 
+def plot_coverage_vs_atypicality(df, atypicality_score_title='KNN Score', atypicality_col='knn_score', lower_col='aar_knn_lower', upper_col='aar_knn_upper', 
+                                 num_quantiles=5, ylim_bottom=None, ylim_top=None):
+    """
+    :param df: Dataframe of 
+    :param atypicality_score_title: Description
+    :param atypicality_col: Description
+    :param lower_col: Description
+    :param upper_col: Description
+    :param num_quantiles: Description
+    :param ylim_bottom: Description
+    :param ylim_top: Description
+    """
+    
+    # Define quantile bins based on atypicality score
+    df['quantile'] = pd.qcut(df[atypicality_col], num_quantiles, labels=False)
+
+    coverage_results = []
+
+    for q in range(num_quantiles):
+        quantile_df = df[df['quantile'] == q]
+        
+        # Compute coverage for both sets of bounds
+        coverage_aar = ((quantile_df[lower_col] <= quantile_df['y_test']) & (quantile_df['y_test'] <= quantile_df[upper_col])).mean()
+        coverage_pred = ((quantile_df['y_pred_lower'] <= quantile_df['y_test']) & (quantile_df['y_test'] <= quantile_df['y_pred_upper'])).mean()
+
+        coverage_results.append((q, coverage_aar, coverage_pred))
+
+    # Convert results to DataFrame for easy plotting
+    coverage_df = pd.DataFrame(coverage_results, columns=['Quantile', 'Coverage_AAR', 'Coverage_Pred'])
+
+    # Plot
+    plt.figure(figsize=(8, 5))
+    plt.plot(coverage_df['Quantile'], coverage_df['Coverage_AAR'], marker='o', linestyle='-', label='AAR Bounds')
+    plt.plot(coverage_df['Quantile'], coverage_df['Coverage_Pred'], marker='s', linestyle='--', label='Predicted Bounds')
+
+    plt.xlabel(f'{atypicality_score_title} Atypicality Quantile')
+    plt.ylabel('Coverage')
+    plt.title(f'Coverage vs. {atypicality_score_title} Atypicality Quantile')
+    plt.legend()
+    plt.grid(True)
+
+    # Set y-axis limits if specified
+    if ylim_bottom is not None or ylim_top is not None:
+        plt.ylim(ylim_bottom, ylim_top)
+
+    plt.show()
+
 # Where in the originally generated intervals do our points lie? 
 def plot_ytest_distribution(df, atypicality_col='log_joint_mvn_score', num_quantiles=5, lower_col='y_pred_lower', upper_col='y_pred_upper', aapi=True):
     # Define quantile bins
@@ -164,7 +233,6 @@ def plot_ytest_distribution(df, atypicality_col='log_joint_mvn_score', num_quant
 
     plt.tight_layout()
     plt.show()
-
 
 # Plotting a random sample of points and intervals before and after AAPI
 def plot_sampled_predictions(df, atypicality_col='log_joint_mvn_score', lower_col='aapi_log_joint_mvn_lower', upper_col='aapi_log_joint_mvn_upper', sample_per_quantile=6, random_seed=1):
