@@ -83,25 +83,50 @@ def plot_efficiency_vs_atypicality(df, atypicality_score_title='KNN Score', atyp
     plt.grid(True)
     plt.show()
 
-def plot_with_error_bars(coverage_dfs, atypicality_score_title, ylim_bottom=None, ylim_top=None):
-    merged_df = pd.concat(coverage_dfs).groupby('Quantile').agg(['mean', 'std']).reset_index()
-    
+def plot_coverage_across_atypicality_quantile(
+        df,
+        atypicality_score,
+        atypicality_score_title,
+        ylim_bottom=None,
+        ylim_top=None,
+        save=True):
+    """
+    df columns:
+        Quantile, Coverage, lambda, score, split
+    """
+    # Filter for specified score
+    df = df[df['score'] == atypicality_score]
+
+    # Aggregate across splits
+    agg = (df.groupby(['lambda', 'quantile'])['coverage']
+        .agg(['mean', 'std'])
+        .reset_index())
+
     plt.figure(figsize=(8, 5))
-    plt.errorbar(merged_df['Quantile'], merged_df['Coverage_AAR']['mean'],
-                 yerr=merged_df['Coverage_AAR']['std'], fmt='o-', label='AAR Bounds', capsize=5)
-    
-    plt.errorbar(merged_df['Quantile'], merged_df['Coverage_Pred']['mean'],
-                 yerr=merged_df['Coverage_Pred']['std'], fmt='s--', label='Predicted Bounds', capsize=5)
-    
+
+    for lam, lam_df in agg.groupby('lambda'):
+        plt.errorbar(
+            lam_df['quantile'],
+            lam_df['mean'],
+            yerr=lam_df['std'],
+            fmt='o-',
+            capsize=4,
+            label=f'λ = {lam}')
+
     plt.xlabel(f'{atypicality_score_title} Atypicality Quantile')
     plt.ylabel('Coverage')
     plt.title(f'Coverage vs. {atypicality_score_title} Atypicality Quantile')
     plt.legend()
     plt.grid(True)
 
-    # Set y-axis limits if specified
     if ylim_bottom is not None or ylim_top is not None:
         plt.ylim(ylim_bottom, ylim_top)
+
+    if save:
+        score_string = atypicality_score_title.lower().replace(" ", "")
+        lambdas = "_".join(str(l).replace(".", "p") for l in sorted(df["lambda"].unique()))
+        filename = f"coverage_vs_{score_string}_lam_{lambdas}.png"
+        plt.savefig("../plots/" + filename, dpi=300, bbox_inches="tight")
 
     plt.show()
 

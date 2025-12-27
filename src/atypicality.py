@@ -83,63 +83,6 @@ def kde_score(input_point, dataset, kernel_function):
 
     return weighted_mean_distance
 
-# Joint MVN Score
-def joint_mvn_score(input_point, dataset):
-    """
-    Calculate the Joint MVN Atypicality Score.
-
-    Parameters:
-        input_point (tuple): A tuple (x_i, y_i_hat) where x_i is the feature vector and y_i_hat is the predicted output.
-        dataset (list of tuples): A list [(x_1, y_1), (x_2, y_2), ...] where x_i is a feature vector and y_i is the output.
-
-    Returns:
-        float: Joint MVN atypicality score.
-    """
-    x_i, y_i_hat = input_point 
-
-    # Extract feature vectors (X) and target values (y) from the dataset
-    X = np.array([point[0] for point in dataset])  
-    y = np.array([point[1] for point in dataset]) 
-
-    # Estimate the parameters of the joint MVN
-    mu_X = np.mean(X, axis=0)  
-    mu_Y = np.mean(y) 
-    
-    # Covariance matrices
-    Sigma_XX = np.cov(X, rowvar=False)  # Covariance of X
-    Sigma_YY = np.array([[np.var(y)]])          # Variance of Y (scalar, since Y is 1D)
-    Sigma_XY = np.cov(X.T, y, rowvar=True)[:-1, -1].reshape(-1, 1)  # Covariance between X and Y
-
-    # Compute joint probability P(X = x_i, Y = y_i_hat)
-    # Define the joint mean and covariance matrix for the multivariate normal
-    mu_joint = np.hstack((mu_X, mu_Y))
-    Sigma_joint = np.block([[Sigma_XX, Sigma_XY],
-                            [Sigma_XY.T, Sigma_YY]])
-    
-    # Create the multivariate normal distribution
-
-    # Eigenvalue Clipping to ensure that our covariance matrix is positive semi-definite   
-    eigvals, eigvecs = np.linalg.eigh(Sigma_joint)          # Perform eigen decomposition
-    eigvals[eigvals < 0] = 1e-6    # Clip negative eigenvalues
-    Sigma_joint = eigvecs @ np.diag(eigvals) @ eigvecs.T # Reconstruct the covariance matrix
-
-    rv_joint = multivariate_normal(mean=mu_joint, cov=Sigma_joint, allow_singular=True) #TODO: check whether allow_singular=True is counterintuitive or not good
-
-    # Compute the joint probability at the input point
-    joint_prob = rv_joint.pdf(np.hstack((x_i, y_i_hat)))
-    
-    # Compute marginal probability P(Y = y_i_hat)
-    # Create the normal distribution for Y
-    rv_Y = norm(loc=mu_Y, scale=np.sqrt(Sigma_YY))
-
-    # Compute the marginal probability for Y
-    marginal_prob = rv_Y.pdf(y_i_hat)
-
-    # Compute atypicality score
-    atypicality_score = joint_prob / marginal_prob
-
-    return atypicality_score.item()
-
 # Log Joint MVN atypicality score
 logjointmvn_cache = {}
 
@@ -183,7 +126,7 @@ def get_logjointmvn_params(dataset):
 
     return rv_joint, rv_Y
 
-def log_joint_mvn_score(input_point, dataset):
+def logjointmvn_score(input_point, dataset):
     """
     Calculate the Negative Log Joint MVN Atypicality Score.
 
@@ -372,113 +315,6 @@ def gmm_score(input_point, dataset):
 
     return gmm_score.item()
 
-# Joint Lognormal atypicality score
-jointlognormal_cache = {}
-
-def get_jointlognormal_params(dataset):
-    """Fit a multivariate lognormal distribution to (X, Y)."""
-    # Extract feature vectors (X) and target values (y) from the dataset
-    X = np.array([point[0] for point in dataset])  
-    y = np.array([point[1] for point in dataset]) 
-
-    assert np.all(X >= 0), "Array contains negative values!"
-  
-    # Convert (X, Y) to log-space to assume normality
-    X_log = np.log(X)
-    y_log = np.log(y)
-    
-    # Stack X_log and y_log to form the joint log-space representation
-    XY_log = np.column_stack((X_log, y_log))
-
-    # Compute mean and covariance in log-space
-    mu_log = np.mean(XY_log, axis=0)
-    
-    lw = LedoitWolf()
-    lw.fit(XY_log)
-    Sigma_log = lw.covariance_
-
-    # Regularization to ensure positive semi-definite covariance
-    epsilon = 1e-6
-    eigvals, eigvecs = np.linalg.eigh(Sigma_log)
-    eigvals[eigvals < epsilon] = epsilon  
-    Sigma_log = eigvecs @ np.diag(eigvals) @ eigvecs.T
-
-    return mu_log, Sigma_log
-
-def jointlognormal_score(input_point, dataset):
-    """Compute the log-likelihood under the joint lognormal model."""
-    x_i, y_i_hat = input_point 
-    y_i_hat = np.array(y_i_hat).reshape(-1) # Ensure y_i_hat is a 1D array (shape: (1,))
-
-    # Load or compute Log Joint MVN parameters
-    dataset_hash = hash_dataset(dataset)
-    if dataset_hash not in jointlognormal_cache:
-        jointlognormal_cache[dataset_hash] = get_jointlognormal_params(dataset)  
-    mu_log, Sigma_log = jointlognormal_cache[dataset_hash]
-
-    # Transform input to log-space
-    x_log = np.log(x_i)
-    y_log = np.log(y_i_hat)
-    xy_log = np.hstack((x_log, y_log))
-
-    # Compute log probability using a multivariate normal in log-space
-    log_mvn_density = multivariate_normal.logpdf(xy_log, mean=mu_log, cov=Sigma_log)
-
-    # Convert back from log-density
-    jointlognormal_score = -log_mvn_density
-
-    return max(jointlognormal_score.item(), 0.0)
-
-# Joint Skew t-distribution atypicality score
-jointskewt_cache = {}
-
-def get_jointskewt_params(dataset):
-    """Fit a multivariate skew-t distribution to (X, Y)."""
-    # Extract X (features) and y (target)
-    X = np.array([point[0] for point in dataset])
-    y = np.array([point[1] for point in dataset])
-
-    # Compute mean (location parameter)
-    mu = np.mean(np.column_stack((X, y)), axis=0)
-
-    # Compute covariance (scale matrix) using Ledoit-Wolf shrinkage
-    lw = LedoitWolf()
-    lw.fit(np.column_stack((X, y)))
-    Sigma = lw.covariance_
-
-    # Regularization to ensure positive semi-definite covariance
-    epsilon = 1e-6
-    eigvals, eigvecs = np.linalg.eigh(Sigma)
-    eigvals[eigvals < epsilon] = epsilon
-    Sigma = eigvecs @ np.diag(eigvals) @ eigvecs.T
-
-    # Estimate degrees of freedom (ν) heuristically
-    nu = 5  # You can tune this based on domain knowledge
-
-    return mu, Sigma, nu
-
-def jointskewt_score(input_point, dataset):
-    """Compute the log-likelihood under the joint skew-t model."""
-    x_i, y_i_hat = input_point
-    y_i_hat = np.array(y_i_hat).reshape(-1)  # Ensure 1D array
-
-    # Load or compute skew-t parameters
-    dataset_hash = hash_dataset(dataset)
-    if dataset_hash not in jointskewt_cache:
-        jointskewt_cache[dataset_hash] = get_jointskewt_params(dataset)
-    mu, Sigma, nu = jointskewt_cache[dataset_hash]
-
-    # Form input vector
-    xy = np.hstack((x_i, y_i_hat))
-
-    # Compute log probability using multivariate-t distribution
-    log_t_density = multivariate_t.logpdf(xy, loc=mu, shape=Sigma, df=nu)
-
-    # Convert to atypicality score (higher score = more atypical)
-    jointskewt_score = -log_t_density
-
-    return max(float(jointskewt_score), 0.0)  # Ensure scalar output
-
 def compute_atypicality_scores(X_test, y_pred, X_fit, y_fit, score_type):
     dataset = list(zip(X_fit, y_fit))
     scores = []
@@ -489,16 +325,12 @@ def compute_atypicality_scores(X_test, y_pred, X_fit, y_fit, score_type):
             scores.append(knn_score(input_point, dataset))
         elif score_type == 'kde_score':
             scores.append(kde_score(input_point, dataset, gaussian_kernel))
-        elif score_type == 'log_joint_mvn_score':
-            scores.append(log_joint_mvn_score(input_point, dataset)) 
+        elif score_type == 'logjointmvn_score':
+            scores.append(logjointmvn_score(input_point, dataset)) 
         elif score_type == 'lognormal_score':
             scores.append(lognormal_score(input_point, dataset)) 
         elif score_type == 'gmm_score':
             scores.append(gmm_score(input_point, dataset)) 
-        elif score_type == 'jointlognormal_score':
-            scores.append(jointlognormal_score(input_point, dataset)) 
-        elif score_type == 'jointskewt_score':
-            scores.append(jointskewt_score(input_point, dataset)) 
         else:
             raise ValueError(f"Invalid score type: {score_type}")
 
