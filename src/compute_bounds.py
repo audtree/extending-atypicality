@@ -1,11 +1,10 @@
+import sys
+sys.path.append("../src")
+
 import numpy as np
 import pandas as pd
 from sklearn.metrics import r2_score, mean_squared_error
 from collections import defaultdict
-
-import sys
-sys.path.append("../src")
-
 from atypicality import compute_atypicality_scores
 from data_generation_settings import generate_and_split_gaussian_data
 from fit_cp_models import fit_rf_cp_model, predict_cp_intervals

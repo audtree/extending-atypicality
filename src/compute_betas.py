@@ -1,11 +1,12 @@
-import pandas as pd
-import numpy as np
-import sys
 import os
+import sys
+import numpy as np
+import pandas as pd
 from contextlib import contextmanager, nullcontext 
 
 from data_generation_settings import generate_and_split_gaussian_data, generate_and_split_lognormal_data, generate_and_split_gmm_data
 from fit_cp_models import fit_rf_cp_model, fit_gaussian_cp_model, fit_conformal_cp_model
+from compute_bounds import evaluate_lambda_adjusted_interval_coverage
 
 @contextmanager
 def suppress_all_output():
