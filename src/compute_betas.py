@@ -59,7 +59,7 @@ def compute_beta(true_atypicality, silent=False):
                         ("knn_score", 0),
                         ("kde_score", 0),
                         ("logjointmvn_score", 0),
-                        # ("lognormal_score", 0),
+                        ("lognormal_score", 0),
                         ("gmm_score", 0)
                     ]
 

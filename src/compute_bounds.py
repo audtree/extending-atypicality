@@ -1,6 +1,7 @@
 import sys
 sys.path.append("../src")
 
+import os
 import numpy as np
 import pandas as pd
 from sklearn.metrics import r2_score, mean_squared_error
@@ -8,8 +9,20 @@ from collections import defaultdict
 from atypicality import compute_atypicality_scores
 from data_generation_settings import generate_and_split_gaussian_data
 from fit_cp_models import fit_rf_cp_model, predict_cp_intervals
-from compute_bounds import suppress_all_output
-from contextlib import nullcontext 
+from contextlib import contextmanager, nullcontext 
+
+@contextmanager
+def suppress_all_output():
+    """Context manager to suppress all stdout and stderr."""
+    with open(os.devnull, "w") as devnull:
+        old_stdout, old_stderr = sys.stdout, sys.stderr
+        try:
+            sys.stdout = devnull
+            sys.stderr = devnull
+            yield
+        finally:
+            sys.stdout = old_stdout
+            sys.stderr = old_stderr
 
 def generate_base_cp_intervals_and_atypicality(
         make_and_split_data,
@@ -34,6 +47,13 @@ def generate_base_cp_intervals_and_atypicality(
     y_for_score = y_test if true_atypicality else y_pred[:, 0]
     scores = compute_atypicality_scores(
         X_test, y_for_score, X_fit, y_fit, score_type=score_type)
+
+    print("Test!")
+    print("y_test:", np.shape(y_test))
+    print("y_pred:", np.shape(y_pred))
+    print("y_lower:", np.shape(y_lower))
+    print("y_upper:", np.shape(y_upper))
+    print("scores:", np.shape(scores))
 
     df = pd.DataFrame({
             "y_test": y_test,

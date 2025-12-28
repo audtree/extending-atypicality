@@ -231,7 +231,7 @@ def lognormal_score(input_point, dataset):
     # Assemble bayes
     lognormal_score = y_given_x_density*x_density/y_density
 
-    return lognormal_score
+    return lognormal_score.item()
 
 # GMM atypicality score
 gmm_cache = {}
