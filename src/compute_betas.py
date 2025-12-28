@@ -40,7 +40,7 @@ def compute_beta(true_atypicality, silent=False):
                 fit_gaussian_cp_model, 
                 fit_conformal_cp_model]
 
-    # Optionally wrap the entire loop in the suppress context
+    # Wrap the entire loop in the suppress context
     context = suppress_all_output() if silent else nullcontext()
     with context:
         for data_gen in data_generation_settings:

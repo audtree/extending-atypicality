@@ -8,6 +8,8 @@ from collections import defaultdict
 from atypicality import compute_atypicality_scores
 from data_generation_settings import generate_and_split_gaussian_data
 from fit_cp_models import fit_rf_cp_model, predict_cp_intervals
+from compute_bounds import suppress_all_output
+from contextlib import nullcontext 
 
 def generate_base_cp_intervals_and_atypicality(
         make_and_split_data,
@@ -78,49 +80,53 @@ def evaluate_lambda_adjusted_interval_coverage(
         n_samples,
         n_splits,
         true_atypicality,
-        num_quantiles):
+        num_quantiles,
+        silent):
     
     lambdas_by_score = group_lambdas_by_score(atypicality_settings)
     results = []
 
-    for split in range(n_splits):
-        for score_type, lambdas in lambdas_by_score.items():
+    # Wrap the entire loop in the suppress context
+    context = suppress_all_output() if silent else nullcontext()
+    with context:
+        for split in range(n_splits):
+            for score_type, lambdas in lambdas_by_score.items():
 
-            base_df = generate_base_cp_intervals_and_atypicality(
-                make_and_split_data,
-                fit_cp_model,
-                score_type,
-                n_samples,
-                split,
-                true_atypicality)
+                base_df = generate_base_cp_intervals_and_atypicality(
+                    make_and_split_data,
+                    fit_cp_model,
+                    score_type,
+                    n_samples,
+                    split,
+                    true_atypicality)
 
-            y_test = base_df["y_test"].values
-            y_pred = base_df["y_pred"].values
-            lower0 = base_df["y_pred_lower"].values
-            upper0 = base_df["y_pred_upper"].values
-            scores = base_df[score_type].values
-            base_scaling = base_df["base_scaling"].values
+                y_test = base_df["y_test"].values
+                y_pred = base_df["y_pred"].values
+                lower0 = base_df["y_pred_lower"].values
+                upper0 = base_df["y_pred_upper"].values
+                scores = base_df[score_type].values
+                base_scaling = base_df["base_scaling"].values
 
-            quantiles = pd.qcut(scores, num_quantiles, labels=False)
+                quantiles = pd.qcut(scores, num_quantiles, labels=False)
 
-            for lam in lambdas:
-                scaling = 1 + lam * base_scaling
+                for lam in lambdas:
+                    scaling = 1 + lam * base_scaling
 
-                lower = y_pred - scaling * (y_pred - lower0)
-                upper = y_pred + scaling * (upper0 - y_pred)
+                    lower = y_pred - scaling * (y_pred - lower0)
+                    upper = y_pred + scaling * (upper0 - y_pred)
 
-                for q in range(num_quantiles):
-                    mask = quantiles == q
-                    coverage = np.mean(
-                        (lower[mask] <= y_test[mask]) &
-                        (y_test[mask] <= upper[mask]))
+                    for q in range(num_quantiles):
+                        mask = quantiles == q
+                        coverage = np.mean(
+                            (lower[mask] <= y_test[mask]) &
+                            (y_test[mask] <= upper[mask]))
 
-                    results.append({
-                        "score": score_type,
-                        "lambda": lam,
-                        "quantile": q,
-                        "coverage": coverage,
-                        "split": split})
+                        results.append({
+                            "score": score_type,
+                            "lambda": lam,
+                            "quantile": q,
+                            "coverage": coverage,
+                            "split": split})
 
     return pd.DataFrame(results)
 

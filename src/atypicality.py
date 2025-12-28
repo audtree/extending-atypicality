@@ -85,7 +85,6 @@ def kde_score(input_point, dataset, kernel_function):
 
 # Log Joint MVN atypicality score
 logjointmvn_cache = {}
-
 def get_logjointmvn_params(dataset):
     """Fit a GMM and return its parameters."""
     # Extract feature vectors (X) and target values (y) from the dataset
@@ -163,8 +162,6 @@ def logjointmvn_score(input_point, dataset):
 
 # Lognormal atypicality score
 lognormal_cache = {}
-
-print("lognorm in globals:", "lognorm" in globals())
 def get_lognormal_params(dataset):
     """ Estimate weights, latent normal distribution parameters for X, and lognormal distribution parameters for Y."""
     # Extract feature vectors (X) and target values (y) from the dataset
@@ -238,7 +235,6 @@ def lognormal_score(input_point, dataset):
 
 # GMM atypicality score
 gmm_cache = {}
-
 def get_gmm_params(dataset):
     """Fit a GMM and return its parameters."""
     # Extract feature vectors (X) and target values (y) from the dataset
