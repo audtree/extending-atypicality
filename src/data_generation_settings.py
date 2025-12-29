@@ -23,6 +23,7 @@ def split_and_scale_data(X, y, test_size, calib_size, random_seed):
 
     return X_fit, X_calib, X_test, y_fit, y_calib, y_test, scaler
 
+# Generate simulated datasets
 def generate_and_split_mvn_data(random_seed, test_size=0.2, calib_size=0.2, noise_std=0.5, n_samples=5000):
     """
     Corresponding atypicality score: Log Joint MVN
@@ -136,46 +137,106 @@ def generate_and_split_gmm_data(random_seed, test_size=0.2, calib_size=0.2, n_co
 
     return X_fit, X_calib, X_test, y_fit, y_calib, y_test, scaler
 
-# Load California Housing Data
-def load_and_split_chd_data(random_seed, test_size=0.2, calib_size=0.2, n_samples=5000):
+# Load real-world datasets
+def load_and_split_chd_data(random_seed, test_size=0.2, calib_size=0.2, n_samples=None):
     # Load California Housing dataset
     X, y = fetch_california_housing(return_X_y=True)
 
     # Take a random subset of the dataset
-    X, _, y, _ = train_test_split(X, y, train_size=n_samples, random_state=random_seed)
+    X, _, y, _ = train_test_split(X, y, test_size=0.2, random_state=random_seed)
 
     X_fit, X_calib, X_test, y_fit, y_calib, y_test, scaler = split_and_scale_data(X, y, test_size, calib_size, random_seed)
 
     return X_fit, X_calib, X_test, y_fit, y_calib, y_test, scaler
 
-def load_wine_quality_data_csv(file_path):
-    # Load Wine Quality dataset from a CSV file
-    df = pd.read_csv(file_path, sep=";")
-    
-    # Split into features (X) and target (y)
-    X = df.drop("quality", axis=1).values
-    y = df["quality"].values
-    
-    return X, y
-
-def load_and_split_wine_data(random_seed, test_size=0.2, calib_size=0.2):
-    # Load Wine dataset
-    X, y = load_wine_quality_data_csv("~/Downloads/wine+quality/winequality-white.csv")
-
-    # Take a random subset of the dataset
-    X, _, y, _ = train_test_split(X, y, random_state=random_seed)
-
-    X_fit, X_calib, X_test, y_fit, y_calib, y_test, scaler = split_and_scale_data(X, y, test_size, calib_size, random_seed)
-
-    return X_fit, X_calib, X_test, y_fit, y_calib, y_test, scaler
-
-def load_and_split_diabetes_data(random_seed, test_size=0.2, calib_size=0.2):
+def load_and_split_diabetes_data(random_seed, test_size=0.2, calib_size=0.2, n_samples=None):
     # Load Diabetes dataset
     X, y = load_diabetes(return_X_y=True)
 
     # Take a random subset of the dataset
     X, _, y, _ = train_test_split(X, y, random_state=random_seed)
 
+    X_fit, X_calib, X_test, y_fit, y_calib, y_test, scaler = split_and_scale_data(X, y, test_size, calib_size, random_seed)
+
+    return X_fit, X_calib, X_test, y_fit, y_calib, y_test, scaler
+
+def load_and_split_hf_data(random_seed, test_size=0.2, calib_size=0.2, n_samples=None):
+    # Load Wine dataset
+    df_hf = pd.read_csv('../data/heart_failure_clinical_records_dataset.csv')
+    X, y = df_hf.drop(columns=['DEATH_EVENT']), df_hf['DEATH_EVENT']
+
+    # Take a random subset of the dataset
+    X, _, y, _ = train_test_split(X, y, random_state=random_seed)
+
+    X_fit, X_calib, X_test, y_fit, y_calib, y_test, scaler = split_and_scale_data(X, y, test_size, calib_size, random_seed)
+
+    return X_fit, X_calib, X_test, y_fit, y_calib, y_test, scaler
+
+from sklearn.impute import SimpleImputer
+def load_and_split_support_data(random_seed, test_size=0.2, calib_size=0.2, n_samples=None):
+    df_support2 = pd.read_csv('../data/support2.csv')
+
+    # Drop rows with 1 missing value
+    missing_counts = df_support2.isnull().sum()
+    columns_with_one_missing = missing_counts[missing_counts == 1].index.tolist()
+    rows_to_drop_indices = []
+
+    for col in columns_with_one_missing:
+        row_index = df_support2[df_support2[col].isnull()].index[0]
+        rows_to_drop_indices.append(row_index)
+
+    df_support2.drop(list(set(rows_to_drop_indices)), inplace=True)
+
+    # Drop columns with more than 50% missingness
+    drop_cols = ['adlp', 'urine', 'glucose']
+    df_support2.drop(columns=drop_cols, inplace=True)
+
+    # Add missingness flags
+    for col in df_support2.columns:
+        df_support2[col + '_missing'] = df_support2[col].isnull().astype(int)
+
+    # Impute the rest of the columns
+    num_cols = df_support2.select_dtypes(include='number').columns.tolist()
+    cat_cols = [c for c in df.columns if c not in num_cols and not c.endswith('_missing')]
+
+    # Numeric imputation with median
+    num_imputer = SimpleImputer(strategy='median')
+    df_support2[num_cols] = num_imputer.fit_transform(df_support2[num_cols])
+
+    # Impute categorical features with mode
+    cat_imputer = SimpleImputer(strategy='most_frequent')
+    df_support2[cat_cols] = cat_imputer.fit_transform(df_support2[cat_cols])
+
+    # Drop rows with 6 or more missing values
+    missing_flag_cols = [c for c in df_support2.columns if c.endswith('_missing')]
+    df_support2['num_missing'] = df_support2[missing_flag_cols].sum(axis=1)
+    df_support2 = df_support2[df_support2['num_missing'] <= 6].copy()
+
+    # Map ordinal columns
+    ordinal_cols = ['income', 'sfdm2']
+    income_mapping = {
+        'under $11k': 1,
+        '$11-$25k': 2,
+        '$25-$50k': 3,
+        '>$50k': 4}
+
+    sfdm2_mapping = {
+        'no(M2 and SIP pres)': 1,
+        'adl>=4 (>=5 if sur)': 2,
+        'SIP>=30': 3,
+        'Coma or Intub': 4,
+        '<2 mo. follow-up': 5}
+
+    df['income'] = df['income'].map(income_mapping).fillna(df['income'].median())
+    df['sfdm2'] = df['sfdm2'].map(sfdm2_mapping).fillna(df['sfdm2'].median())
+
+    # One-hot encode remaining categorical columns
+    onehot_cols = [c for c in df.columns if c not in ordinal_cols and not c.endswith('_missing') and df[c].dtype == object]
+    df = pd.get_dummies(df, columns=onehot_cols, drop_first=False, dtype=int)
+
+    # Split data
+    X, y = df_support2.drop(columns=['sfdm2']), df_support2['sfdm2']
+    X, _, y, _ = train_test_split(X, y, random_state=random_seed)
     X_fit, X_calib, X_test, y_fit, y_calib, y_test, scaler = split_and_scale_data(X, y, test_size, calib_size, random_seed)
 
     return X_fit, X_calib, X_test, y_fit, y_calib, y_test, scaler
