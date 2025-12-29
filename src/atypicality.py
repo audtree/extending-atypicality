@@ -290,59 +290,59 @@ def gmm_score(input_point, dataset):
         gmm_cache[dataset_hash] = get_gmm_params(dataset)
     beta_hat, sigma_hat, gmm = gmm_cache[dataset_hash]
 
-    # Compute P(Y | X) assuming y | X ~ N(X @ beta, sigma^2)
-    py_given_x = norm.pdf(y_i_hat, loc=x_i @ beta_hat, scale=sigma_hat)
-    
-    # Compute P(X) using the fitted GMM
-    if np.isnan(x_i).any():
-        raise ValueError("NaN detected in x_i before computing GMM score.")
-    px = np.exp(gmm.score_samples(x_i.reshape(1, -1)))[0]
-    
-    # Compute marginal P(Y) via integral P(Y) = ∫ P(Y|X) P(X) dX
-    # Approximate using Monte Carlo by averaging over sampled X
-    X_samples = gmm.sample(1000)[0]  # Sample from the GMM
-    py_samples = norm.pdf(y_i_hat, loc=X_samples @ beta_hat, scale=sigma_hat)
-    py = np.mean(py_samples)  # Approximate integral
-    
-    # Compute P(X | Y) using Bayes' theorem
-    if py == 0:
-        print("Warning: py is zero, setting px_given_y to a small value.")
-        px_given_y = 1e-9  # Prevent division by zero, use a small value
-    else:
-        px_given_y = (py_given_x * px) / py
-
-    # Safeguard to prevent log of zero or too small values
-    if px_given_y <= 1e-15:
-        print(f"Warning: px_given_y is too small ({px_given_y}), setting to 1e-15.")
-        px_given_y = 1e-9  # Avoid log(0) or log(small number)
-
-    # Compute the score
-    gmm_score = -np.log(px_given_y + 1e-9)
-
-    return gmm_score.item()
-
     # # Compute P(Y | X) assuming y | X ~ N(X @ beta, sigma^2)
-    # log_py_given_x = norm.logpdf(
-    #     y_i_hat, loc=x_i @ beta_hat, scale=sigma_hat)
+    # py_given_x = norm.pdf(y_i_hat, loc=x_i @ beta_hat, scale=sigma_hat)
     
     # # Compute P(X) using the fitted GMM
     # if np.isnan(x_i).any():
     #     raise ValueError("NaN detected in x_i before computing GMM score.")
-    # log_px = gmm.score_samples(x_i.reshape(1, -1))[0]
+    # px = np.exp(gmm.score_samples(x_i.reshape(1, -1)))[0]
     
     # # Compute marginal P(Y) via integral P(Y) = ∫ P(Y|X) P(X) dX
-    # # Approximate using Monte Carlo by averaging over sampled X (M # of monte carlo samples)
-    # M = 1000
-    # X_samples = gmm.sample(M)[0]
-    # log_py_samples = norm.logpdf(y_i_hat, loc=X_samples @ beta_hat, scale=sigma_hat)
-    # log_py = logsumexp(log_py_samples) - np.log(M)
+    # # Approximate using Monte Carlo by averaging over sampled X
+    # X_samples = gmm.sample(1000)[0]  # Sample from the GMM
+    # py_samples = norm.pdf(y_i_hat, loc=X_samples @ beta_hat, scale=sigma_hat)
+    # py = np.mean(py_samples)  # Approximate integral
     
-    # # Compute P(X | Y) using Bayes' theorem in log-space
-    # log_px_given_y = log_py_given_x + log_px - log_py
+    # # Compute P(X | Y) using Bayes' theorem
+    # if py == 0:
+    #     print("Warning: py is zero, setting px_given_y to a small value.")
+    #     px_given_y = 1e-9  # Prevent division by zero, use a small value
+    # else:
+    #     px_given_y = (py_given_x * px) / py
+
+    # # Safeguard to prevent log of zero or too small values
+    # if px_given_y <= 1e-15:
+    #     print(f"Warning: px_given_y is too small ({px_given_y}), setting to 1e-15.")
+    #     px_given_y = 1e-9  # Avoid log(0) or log(small number)
 
     # # Compute the score
-    # gmm_score = -log_px_given_y
+    # gmm_score = -np.log(px_given_y + 1e-9)
+
     # return gmm_score.item()
+
+    # Compute P(Y | X) assuming y | X ~ N(X @ beta, sigma^2)
+    log_py_given_x = norm.logpdf(
+        y_i_hat, loc=x_i @ beta_hat, scale=sigma_hat)
+    
+    # Compute P(X) using the fitted GMM
+    if np.isnan(x_i).any():
+        raise ValueError("NaN detected in x_i before computing GMM score.")
+    log_px = gmm.score_samples(x_i.reshape(1, -1))[0]
+    
+    # Compute marginal P(Y) via integral P(Y) = ∫ P(Y|X) P(X) dX
+    # Approximate using Monte Carlo by averaging over sampled X (M # of monte carlo samples)
+    M = 1000
+    X_samples = gmm.sample(M)[0]
+    log_py_samples = norm.logpdf(y_i_hat, loc=X_samples @ beta_hat, scale=sigma_hat)
+    log_py = logsumexp(log_py_samples) - np.log(M)
+    
+    # Compute P(X | Y) using Bayes' theorem in log-space
+    log_px_given_y = log_py_given_x + log_px - log_py
+
+    # Compute the score
+    gmm_score = -log_px_given_y
+    return gmm_score.item()
 
 def compute_atypicality_scores(X_test, y_pred, X_fit, y_fit, score_type):
     dataset = list(zip(X_fit, y_fit))
