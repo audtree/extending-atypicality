@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 from contextlib import contextmanager, nullcontext 
 
-from data_generation_settings import generate_and_split_gaussian_data, generate_and_split_lognormal_data, generate_and_split_gmm_data
+from data_generation_settings import generate_and_split_mvn_data, generate_and_split_lognormal_data, generate_and_split_gmm_data
 from fit_cp_models import fit_rf_cp_model, fit_gaussian_cp_model, fit_conformal_cp_model
 from compute_bounds import evaluate_lambda_adjusted_interval_coverage
 
@@ -32,7 +32,7 @@ def linear_slope(x, y):
 def compute_beta(true_atypicality, silent=False):
     beta_results = []
 
-    data_generation_settings = [generate_and_split_gaussian_data,
+    data_generation_settings = [generate_and_split_mvn_data,
                                 generate_and_split_lognormal_data,
                                 generate_and_split_gmm_data]
 
@@ -47,7 +47,7 @@ def compute_beta(true_atypicality, silent=False):
             for cp_model in cp_models:
 
                 # Define relevant atypicality scores for this data
-                if data_gen in [generate_and_split_gaussian_data, generate_and_split_gmm_data]:
+                if data_gen in [generate_and_split_mvn_data, generate_and_split_gmm_data]:
                     atypicality_settings = [
                         ("knn_score", 0),
                         ("kde_score", 0),

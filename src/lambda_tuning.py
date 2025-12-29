@@ -7,12 +7,12 @@ import sys
 sys.path.append("../src")
 
 from atypicality import compute_atypicality_scores
-from data_generation_settings import generate_and_split_gaussian_data, generate_and_split_gmm_data
+from data_generation_settings import generate_and_split_mvn_data, generate_and_split_gmm_data
 from fit_cp_models import fit_rf_cp_model, predict_cp_intervals
 from compute_bounds import compute_adjusted_bounds, compute_coverage_by_quantile
 
 
-def calc_lam_aar_intervals(atyp_col, atypicality_settings, make_and_split_data=generate_and_split_gaussian_data, 
+def calc_lam_aar_intervals(atyp_col, atypicality_settings, make_and_split_data=generate_and_split_mvn_data, 
                            fit_cp_model=fit_rf_cp_model, n_splits=10, true_atypicality=False, random_seed_start=0):
     
     all_results = {f"{atyp_col}_lam{str(lam).replace('.', '-')}": [] for atyp_col, _, _, lam in atypicality_settings}

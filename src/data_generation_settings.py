@@ -23,7 +23,7 @@ def split_and_scale_data(X, y, test_size, calib_size, random_seed):
 
     return X_fit, X_calib, X_test, y_fit, y_calib, y_test, scaler
 
-def generate_and_split_gaussian_data(random_seed, test_size=0.2, calib_size=0.2, noise_std=0.5, n_samples=5000):
+def generate_and_split_mvn_data(random_seed, test_size=0.2, calib_size=0.2, noise_std=0.5, n_samples=5000):
     """
     Corresponding atypicality score: Log Joint MVN
     """

@@ -4,8 +4,9 @@ import seaborn as sns
 import matplotlib.pyplot as plt
 from sklearn.linear_model import LinearRegression
 
+# Dictionaries for plotting with legible titles
 data_generation_mapping = {
-    "generate_and_split_gaussian_data": "MVN Data Generation Setting",
+    "generate_and_split_mvn_data": "MVN Data Generation Setting",
     "generate_and_split_lognormal_data": "Log Normal Data Generation Setting",
     "generate_and_split_gmm_data": "GMM Data Generation Setting"
 }
