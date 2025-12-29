@@ -10,3 +10,6 @@ pip install -r requirements.txt
 pip list
 ```
 `pip list` verifies that you installed the requirements. 
+
+## Recreating Figures
+Run notebook `notebooks/proof-of-concept.ipynb`. 
