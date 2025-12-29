@@ -27,7 +27,7 @@ cp_model_mapping = {
 # Desired order for x-axis / plotting
 desired_score_order = ["KNN", "KDE", "Log Joint\nMVN", "GMM", "Log\nNormal"]
 
-def plot_betagrouped_by_atypicality(beta_df, outputfile: str):
+def plot_betagrouped_by_atypicality(beta_df, true_atypicality, outputfile):
     """
     Plots regression slopes (Mean Beta) with error bars (Std Beta), 
     grouped by atypicality score and CP model, faceted by data generation setting.
@@ -101,7 +101,10 @@ def plot_betagrouped_by_atypicality(beta_df, outputfile: str):
     fig.legend(handles, labels, title="CP Model",
                loc="lower center", ncol=3, bbox_to_anchor=(0.5, -0.1))
 
-    plt.ylim(-0.14, 0.14)
+    if true_atypicality:
+        plt.ylim(-0.14, 0.14)
+    else:
+        plt.ylim(-0.07, 0.07)
     plt.tight_layout(rect=[0, 0.1, 1, 1])
     plt.savefig("../plots/" + outputfile)
     plt.show()

@@ -23,7 +23,7 @@ def split_and_scale_data(X, y, test_size, calib_size, random_seed):
 
     return X_fit, X_calib, X_test, y_fit, y_calib, y_test, scaler
 
-def generate_and_split_gaussian_data(random_seed, test_size=0.2, calib_size=0.2, noise_std=0.5, n_samples=500):
+def generate_and_split_gaussian_data(random_seed, test_size=0.2, calib_size=0.2, noise_std=0.5, n_samples=5000):
     """
     Corresponding atypicality score: Log Joint MVN
     """
@@ -48,7 +48,7 @@ def generate_and_split_gaussian_data(random_seed, test_size=0.2, calib_size=0.2,
     
     return X_fit, X_calib, X_test, y_fit, y_calib, y_test, scaler
 
-def generate_and_split_lognormal_data(random_seed, test_size=0.2, calib_size=0.2, noise_std=0.9, n_samples=500):
+def generate_and_split_lognormal_data(random_seed, test_size=0.2, calib_size=0.2, noise_std=0.9, n_samples=5000):
     """
     Corresponding atypicality score: lognormal_score.
     Generates only positive X values.
@@ -60,26 +60,37 @@ def generate_and_split_lognormal_data(random_seed, test_size=0.2, calib_size=0.2
     random_matrix = np.random.rand(5, 5)  # Generate random values
     cov = (random_matrix + random_matrix.T) / 2  # Make it symmetric
     np.fill_diagonal(cov, 1.0)  # Ensure diagonal values are 1.0 for variance
-    # cov = np.eye(5)
 
     # Generate latent normal features
-    Z = np.random.multivariate_normal(mean, cov, size=n_samples)
+    X_normal = np.random.multivariate_normal(mean, cov, size=n_samples)
 
     # Ensure no zero values in the log-normal transformation
-    Z_clipped = np.clip(Z, a_min=-10, a_max=None)  # Clip to avoid very large negative values
+    X_normal_clipped = np.clip(X_normal, a_min=-10, a_max=None)  # Clip to avoid very large negative values
 
     # Transform to Log-Normal (exp function ensures strictly positive values)
-    X = np.exp(Z_clipped)
+    X = np.exp(X_normal_clipped)
     assert np.all(X > 0), "Error: X contains non-positive values"
 
     # Generate target variable y as a weighted sum of informative features + noise
     weights = np.array([2.0, 1.5, 0.5, 0.0, 0.1])  # Only first two are informative
     y = X @ weights + np.random.normal(0, noise_std, size=X.shape[0])  # Add Gaussian noise
-    y = np.abs(y) # Correct any negative y values
+
+    # print("Proportion of values that are flipped:", (y < 0).mean())
+
+    # y = np.abs(y) # Correct any negative y values
+    neg = y < 0
+    while np.any(neg):
+        y[neg] = (X[neg] @ weights
+                + np.random.normal(0, noise_std, size=neg.sum()))
+        neg = y < 0
 
     # Split into train, test, calib
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=test_size, random_state=random_seed)
     X_fit, X_calib, y_fit, y_calib = train_test_split(X_train, y_train, test_size=calib_size, random_state=random_seed)
+
+    # temp = 0
+
+    # return X_fit, X_calib, X_test, y_fit, y_calib, y_test, temp
 
     # Scale features (makes standard deviation 1)
     scaler = StandardScaler(with_mean=False)
@@ -93,7 +104,7 @@ def generate_and_split_lognormal_data(random_seed, test_size=0.2, calib_size=0.2
 
     return X_fit, X_calib, X_test, y_fit, y_calib, y_test, scaler
 
-def generate_and_split_gmm_data(random_seed, test_size=0.2, calib_size=0.2, n_components=3, n_features=4, n_samples=500):
+def generate_and_split_gmm_data(random_seed, test_size=0.2, calib_size=0.2, n_components=3, n_features=4, n_samples=5000):
     """
     Corresponding atypicality score: gmm_score. 
     """

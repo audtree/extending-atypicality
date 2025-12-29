@@ -4,6 +4,7 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 import hashlib
 import scipy.stats as stats
+from scipy.special import logsumexp
 
 from sklearn.neighbors import NearestNeighbors
 from scipy.stats import multivariate_normal, norm, multivariate_t, lognorm
@@ -177,7 +178,7 @@ def get_lognormal_params(dataset):
     Sigma_Z = lw.covariance_
 
     # Estimate weights of Y = Xw + error using least squares
-    w = np.linalg.inv(X.T @ X) @ X.T @ y
+    w = np.linalg.solve(X.T @ X, X.T @ y)
 
     # Estimate residual variance
     sigma_sq = np.mean((y - X @ w) ** 2)
@@ -213,25 +214,34 @@ def lognormal_score(input_point, dataset):
 
     # 1. Calcualte f_Y|X(y|x)
     # Compute conditional density
-    y_given_x_density = norm.pdf(y_i_hat, loc= x_i @ w, scale=np.sqrt(sigma_sq))
+    log_py_given_x = norm.logpdf(
+        y_i_hat,
+        loc=x_i @ w,
+        scale=np.sqrt(sigma_sq))
 
     # 2. Calculate f_X(x)
     # Convert x to normal space
     z_i = np.log(x_i)
 
     # Use MVN transformation
-    z_mvn_density = multivariate_normal.pdf(z_i, mean=mu_Z, cov=Sigma_Z)
+    log_pz = multivariate_normal.logpdf(
+        z_i, mean=mu_Z, cov=Sigma_Z)
 
     # Use scaling with Jacobian
-    x_density = z_mvn_density * (1 / np.prod(x_i))
+    log_jacobian = -np.sum(np.log(x_i))
+
+    log_px = log_pz + log_jacobian
 
     # 3. Estimate f_Y(y):
-    y_density = lognorm.pdf(y_i_hat, ylognorm_shape, ylognorm_loc, ylognorm_scale)
-
+    log_py = lognorm.logpdf(
+        y_i_hat,
+        ylognorm_shape,
+        ylognorm_loc,
+        ylognorm_scale)
     # Assemble bayes
-    lognormal_score = y_given_x_density*x_density/y_density
+    log_score = log_py_given_x + log_px - log_py
 
-    return lognormal_score.item()
+    return -log_score.item()
 
 # GMM atypicality score
 gmm_cache = {}
@@ -251,7 +261,7 @@ def get_gmm_params(dataset):
     sigma_hat = max(np.std(residuals), 1e-9) # if the model is perfectly overfit, sigma_hat will be 0 (division by 0)
     
     # Fit a GMM to X
-    gmm = GaussianMixture(n_components=3, covariance_type='full', random_state=42) # TODO: how to determine the number of components here? and which random seed to use for fitting? 
+    gmm = GaussianMixture(n_components=3, covariance_type='full', random_state=42) 
     gmm.fit(X)
 
     return beta_hat, sigma_hat, gmm
@@ -280,35 +290,58 @@ def gmm_score(input_point, dataset):
         gmm_cache[dataset_hash] = get_gmm_params(dataset)
     beta_hat, sigma_hat, gmm = gmm_cache[dataset_hash]
 
+    # # Compute P(Y | X) assuming y | X ~ N(X @ beta, sigma^2)
+    # py_given_x = norm.pdf(y_i_hat, loc=x_i @ beta_hat, scale=sigma_hat)
+    
+    # # Compute P(X) using the fitted GMM
+    # if np.isnan(x_i).any():
+    #     raise ValueError("NaN detected in x_i before computing GMM score.")
+    # px = np.exp(gmm.score_samples(x_i.reshape(1, -1)))[0]
+    
+    # # Compute marginal P(Y) via integral P(Y) = ∫ P(Y|X) P(X) dX
+    # # Approximate using Monte Carlo by averaging over sampled X
+    # X_samples = gmm.sample(1000)[0]  # Sample from the GMM
+    # py_samples = norm.pdf(y_i_hat, loc=X_samples @ beta_hat, scale=sigma_hat)
+    # py = np.mean(py_samples)  # Approximate integral
+    
+    # # Compute P(X | Y) using Bayes' theorem
+    # if py == 0:
+    #     print("Warning: py is zero, setting px_given_y to a small value.")
+    #     px_given_y = 1e-9  # Prevent division by zero, use a small value
+    # else:
+    #     px_given_y = (py_given_x * px) / py
+
+    # # Safeguard to prevent log of zero or too small values
+    # if px_given_y <= 1e-15:
+    #     print(f"Warning: px_given_y is too small ({px_given_y}), setting to 1e-15.")
+    #     px_given_y = 1e-9  # Avoid log(0) or log(small number)
+
+    # # Compute the score
+    # gmm_score = -np.log(px_given_y + 1e-9)
+
+    # return gmm_score.item()
+
     # Compute P(Y | X) assuming y | X ~ N(X @ beta, sigma^2)
-    py_given_x = norm.pdf(y_i_hat, loc=x_i @ beta_hat, scale=sigma_hat)
+    log_py_given_x = norm.logpdf(
+        y_i_hat, loc=x_i @ beta_hat, scale=sigma_hat)
     
     # Compute P(X) using the fitted GMM
     if np.isnan(x_i).any():
         raise ValueError("NaN detected in x_i before computing GMM score.")
-    px = np.exp(gmm.score_samples(x_i.reshape(1, -1)))[0]
+    log_px = gmm.score_samples(x_i.reshape(1, -1))[0]
     
     # Compute marginal P(Y) via integral P(Y) = ∫ P(Y|X) P(X) dX
-    # Approximate using Monte Carlo by averaging over sampled X
-    X_samples = gmm.sample(1000)[0]  # Sample from the GMM
-    py_samples = norm.pdf(y_i_hat, loc=X_samples @ beta_hat, scale=sigma_hat)
-    py = np.mean(py_samples)  # Approximate integral
+    # Approximate using Monte Carlo by averaging over sampled X (M # of monte carlo samples)
+    M = 1000
+    X_samples = gmm.sample(M)[0]
+    log_py_samples = norm.logpdf(y_i_hat, loc=X_samples @ beta_hat, scale=sigma_hat)
+    log_py = logsumexp(log_py_samples) - np.log(M)
     
-    # Compute P(X | Y) using Bayes' theorem
-    if py == 0:
-        print("Warning: py is zero, setting px_given_y to a small value.")
-        px_given_y = 1e-9  # Prevent division by zero, use a small value
-    else:
-        px_given_y = (py_given_x * px) / py
-
-    # Safeguard to prevent log of zero or too small values
-    if px_given_y <= 1e-15:
-        print(f"Warning: px_given_y is too small ({px_given_y}), setting to 1e-15.")
-        px_given_y = 1e-9  # Avoid log(0) or log(small number)
+    # Compute P(X | Y) using Bayes' theorem in log-space
+    log_px_given_y = log_py_given_x + log_px - log_py
 
     # Compute the score
-    gmm_score = -np.log(px_given_y + 1e-9)
-
+    gmm_score = -log_px_given_y
     return gmm_score.item()
 
 def compute_atypicality_scores(X_test, y_pred, X_fit, y_fit, score_type):

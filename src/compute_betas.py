@@ -71,7 +71,8 @@ def compute_beta(true_atypicality, silent=False):
                     n_samples=500,
                     n_splits=5,
                     true_atypicality=true_atypicality,
-                    num_quantiles=5
+                    num_quantiles=5,
+                    silent=silent
                 )
 
                 # Compute slopes for each atypicality score and lambda
