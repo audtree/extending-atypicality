@@ -184,8 +184,11 @@ def load_and_split_support_data(random_seed, test_size=0.2, calib_size=0.2, n_sa
     for col in columns_with_one_missing:
         row_index = df_support2[df_support2[col].isnull()].index[0]
         rows_to_drop_indices.append(row_index)
-
     df_support2.drop(list(set(rows_to_drop_indices)), inplace=True)
+
+    # Drop previous models' recommendations
+    leaky_vars_to_drop = ['aps', 'sps', 'surv2m', 'surv6m', 'prg2m', 'prg6m', 'dnr', 'dnrday']
+    df_support2.drop(columns=leaky_vars_to_drop, inplace=True)
 
     # Drop columns with more than 50% missingness
     drop_cols = ['adlp', 'urine', 'glucose']
@@ -197,7 +200,7 @@ def load_and_split_support_data(random_seed, test_size=0.2, calib_size=0.2, n_sa
 
     # Impute the rest of the columns
     num_cols = df_support2.select_dtypes(include='number').columns.tolist()
-    cat_cols = [c for c in df.columns if c not in num_cols and not c.endswith('_missing')]
+    cat_cols = [c for c in df_support2.columns if c not in num_cols and not c.endswith('_missing')]
 
     # Numeric imputation with median
     num_imputer = SimpleImputer(strategy='median')
@@ -227,16 +230,18 @@ def load_and_split_support_data(random_seed, test_size=0.2, calib_size=0.2, n_sa
         'Coma or Intub': 4,
         '<2 mo. follow-up': 5}
 
-    df['income'] = df['income'].map(income_mapping).fillna(df['income'].median())
-    df['sfdm2'] = df['sfdm2'].map(sfdm2_mapping).fillna(df['sfdm2'].median())
+    df_support2['income'] = df_support2['income'].map(income_mapping)
+    df_support2['sfdm2'] = df_support2['sfdm2'].map(sfdm2_mapping)
 
     # One-hot encode remaining categorical columns
-    onehot_cols = [c for c in df.columns if c not in ordinal_cols and not c.endswith('_missing') and df[c].dtype == object]
-    df = pd.get_dummies(df, columns=onehot_cols, drop_first=False, dtype=int)
+    onehot_cols = [c for c in df_support2.columns if c not in ordinal_cols and not c.endswith('_missing') and df_support2[c].dtype == object]
+    df_support2 = pd.get_dummies(df_support2, columns=onehot_cols, drop_first=False, dtype=int)
+
+    # # Temporary sample of dataset to make it smaller
+    # df_support2 = df_support2.sample(n=500, random_state=random_seed)
 
     # Split data
-    X, y = df_support2.drop(columns=['sfdm2']), df_support2['sfdm2']
-    X, _, y, _ = train_test_split(X, y, random_state=random_seed)
+    X, y = df_support2.drop(columns=['sfdm2']).to_numpy(), df_support2['sfdm2'].to_numpy()
     X_fit, X_calib, X_test, y_fit, y_calib, y_test, scaler = split_and_scale_data(X, y, test_size, calib_size, random_seed)
 
     return X_fit, X_calib, X_test, y_fit, y_calib, y_test, scaler

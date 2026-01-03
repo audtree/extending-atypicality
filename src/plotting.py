@@ -14,9 +14,9 @@ data_generation_mapping = {
 atypicality_score_mapping = {
     'knn_score': 'KNN',
     'kde_score': 'KDE',
-    'lognormal_score': 'Log\nNormal',
+    'lognormal_score': 'Log Normal',
     'gmm_score': 'GMM',
-    'logjointmvn_score': 'Log Joint\nMVN'
+    'logjointmvn_score': 'Log Joint MVN'
 }
 
 cp_model_mapping = {
@@ -38,7 +38,8 @@ def plot_betagrouped_by_atypicality(beta_df, true_atypicality, outputfile):
     beta_df["Data Generation Label"] = beta_df["Data Generation Setting"].map(data_generation_mapping)
     beta_df["Atypicality Label"] = beta_df["Atypicality Score"].map(atypicality_score_mapping)
 
-    fig, axes = plt.subplots(1, 3, figsize=(11, 4), sharey=True)
+    width_ratios = [4, 5, 4] 
+    fig, axes = plt.subplots(1, 3, gridspec_kw={'width_ratios': width_ratios}, figsize=(11, 4), sharey=True)
 
     # Unique CP models and colors
     cp_models = beta_df["CP Model Label"].unique()
@@ -128,6 +129,7 @@ def plot_coverage_across_atypicality_quantile(
     agg = (df.groupby(['lambda', 'quantile'])['coverage']
         .agg(['mean', 'std'])
         .reset_index())
+    agg['quantile'] = agg['quantile'].astype(int)
 
     plt.figure(figsize=(8, 5))
 
