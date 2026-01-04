@@ -155,11 +155,11 @@ def evaluate_lambda_adjusted_interval_coverage(
                         
                         # Store raw dataframe if requested
                         if return_df:
-                            base_df[f"aar_{score_type}_lower_lam{str(lam).replace('.', '-')}"] = lower
-                            base_df[f"aar_{score_type}_upper_lam{str(lam).replace('.', '-')}"] = upper
+                            base_df[f"aapi_{score_type}_lower_lam{str(lam).replace('.', '-')}"] = lower
+                            base_df[f"aapi_{score_type}_upper_lam{str(lam).replace('.', '-')}"] = upper
                             df_results[f"{score_type}_lam{str(lam).replace('.', '-')}"].append(
                                 base_df[['y_test', 'y_pred', 'y_pred_lower', 'y_pred_upper', score_type,
-                                        f"aar_{score_type}_lower_lam{str(lam).replace('.', '-')}",
-                                        f"aar_{score_type}_upper_lam{str(lam).replace('.', '-')}"]])
+                                        f"aapi_{score_type}_lower_lam{str(lam).replace('.', '-')}",
+                                        f"aapi_{score_type}_upper_lam{str(lam).replace('.', '-')}"]])
                             
     return pd.DataFrame(coverage_results), df_results

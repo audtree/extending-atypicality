@@ -7,7 +7,7 @@ import sys
 sys.path.append("../src")
 
 from atypicality import compute_atypicality_scores
-from data_generation_settings import generate_and_split_mvn_data, generate_and_split_gmm_data
+from data_generation_settings import generate_and_split_mvn_data, generate_and_split_gmm_data, generate_and_split_lognormal_data
 from fit_cp_models import fit_rf_cp_model, predict_cp_intervals
 from compute_bounds import apply_lambda_adjustment, coverage_by_quantile, evaluate_lambda_adjusted_interval_coverage
 
@@ -44,8 +44,8 @@ def get_bound_names_from_lambdakey(score_name):
     lam = parts[-1].replace('-', '.')  # Convert '-' back to '.' for lambda
 
     # Constructing the upper and lower quantile names
-    lower_col = f'aar_{atyp_col}_lower_lam{str(lam).replace(".", "-")}'
-    upper_col = f'aar_{atyp_col}_upper_lam{str(lam).replace(".", "-")}'
+    lower_col = f'aapi_{atyp_col}_lower_lam{str(lam).replace(".", "-")}'
+    upper_col = f'aapi_{atyp_col}_upper_lam{str(lam).replace(".", "-")}'
 
     return lower_col, upper_col
 
@@ -135,7 +135,7 @@ def lambda_hyperparameter_tuning(atyp_col='log_joint_mvn_score', make_and_split_
     """
     Important: calculates metrics on y_test. When used for hyperparameter tuning, this 
     treats y_test like a second calibration set for choosing lambda. The data (which 
-    includes y_test) is generated in calc_lam_aar_intervals with a random seed up to
+    includes y_test) is generated in calc_lam_aapi_intervals with a random seed up to
     the number of splits. 
     """
 
@@ -214,3 +214,73 @@ def get_best_lambda(data_dict, coverage_metric='coverage', beta_metric='beta_coe
             best_lambda = lambda_val
     
     return best_lambda
+
+def append_results(results, df, atyp_col, data_generation_setting, cp_model, lambda_value):
+    results.append({
+        'atyp_col': atyp_col,
+        'data_generation_setting': data_generation_setting,
+        'cp_model': cp_model,
+        'lambda': lambda_value,
+        'coverage_mean': df.loc['mean', 'coverage'],
+        'coverage_lower': df.loc['lower', 'coverage'],
+        'coverage_upper': df.loc['upper', 'coverage'],
+        'beta_coeff_mean': df.loc['mean', 'beta_coefficients'],
+        'beta_coeff_lower': df.loc['lower', 'beta_coefficients'],
+        'beta_coeff_upper': df.loc['upper', 'beta_coefficients']
+    })
+
+def run_lambda_selection_and_evaluation(atyp_scores, data_generation_settings, cp_models, n_splits, true_atypicality):
+    lambda_metric_results = []
+    coverage_results = []
+
+    for data_generation_setting in data_generation_settings:
+        for atyp_col in atyp_scores:
+            if atyp_col == 'lognormal_score' and data_generation_setting != generate_and_split_lognormal_data:
+                continue
+
+            for cp_model in cp_models: 
+                # Use lambda_hyperparameter_tuning, uses y_test as a second calibration set. 
+                # This requires that we generate unseen data to evaluate lambda, because we don't
+                # want to evaluate lambda on the dataset (y_test) that we used to select lambda. 
+
+                # The number of runs is: n_splits (3) * n lambda steps (5) 
+                lambda_metrics_hyperparameter_tuning, _, _ = lambda_hyperparameter_tuning(atyp_col=atyp_col, 
+                                                                    make_and_split_data=data_generation_setting, 
+                                                                    fit_cp_model=cp_model, 
+                                                                    n_splits=n_splits, 
+                                                                    true_atypicality=true_atypicality,
+                                                                    hyperparameter_tuning=True)
+                
+                # Select best lambda
+                best_lambda = get_best_lambda(lambda_metrics_hyperparameter_tuning, 'coverage', highest=True)
+
+                lambda_metrics, lambda_results, merged_dfs = lambda_hyperparameter_tuning(atyp_col=atyp_col, 
+                                                                    make_and_split_data=data_generation_setting, 
+                                                                    fit_cp_model=cp_model, 
+                                                                    n_splits=n_splits, 
+                                                                    true_atypicality=true_atypicality, 
+                                                                    hyperparameter_tuning=False, 
+                                                                    best_lambda=best_lambda)
+
+                best_lambda_col = f'{atyp_col}_lam{str(best_lambda).replace(".", "-")}'
+                lambda_0_df = lambda_metrics[f'{atyp_col}_lam0-0']
+                best_lambda_df = lambda_metrics[best_lambda_col]
+                coverage_df = coverage_by_quantile(lambda_results[best_lambda_col][0], 
+                                                            atyp_col,
+                                                            f'aapi_{atyp_col}_lower_lam{str(best_lambda).replace(".", "-")}',
+                                                            f'aapi_{atyp_col}_upper_lam{str(best_lambda).replace(".", "-")}',
+                                                            num_quantiles=5)
+                    
+                # Append the no-lambda value to a dataframe. Also append the best-lambda metrics to a dataframe. 
+                append_results(lambda_metric_results, lambda_0_df, atyp_col, data_generation_setting, cp_model, 0.0)
+                append_results(lambda_metric_results, best_lambda_df, atyp_col, data_generation_setting, cp_model, best_lambda)
+
+                # Store coverage_df with metadata
+                coverage_results.append({
+                    'atyp_col': atyp_col,
+                    'data_generation_setting': data_generation_setting,
+                    'cp_model': cp_model,
+                    'lambda': best_lambda,
+                    'merged_df': merged_dfs[best_lambda_col]
+                })
+    return lambda_metric_results, coverage_results

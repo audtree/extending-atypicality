@@ -159,52 +159,6 @@ def plot_coverage_across_atypicality_quantile(
 
     plt.show()
 
-def plot_coverage_vs_atypicality(df, atypicality_score_title='KNN Score', atypicality_col='knn_score', lower_col='aar_knn_lower', upper_col='aar_knn_upper', 
-                                 num_quantiles=5, ylim_bottom=None, ylim_top=None):
-    """
-    :param df: Dataframe of 
-    :param atypicality_score_title: Description
-    :param atypicality_col: Description
-    :param lower_col: Description
-    :param upper_col: Description
-    :param num_quantiles: Description
-    :param ylim_bottom: Description
-    :param ylim_top: Description
-    """
-    
-    # Define quantile bins based on atypicality score
-    df['quantile'] = pd.qcut(df[atypicality_col], num_quantiles, labels=False)
-
-    coverage_results = []
-
-    for q in range(num_quantiles):
-        quantile_df = df[df['quantile'] == q]
-        
-        # Compute coverage for both sets of bounds
-        coverage_aar = ((quantile_df[lower_col] <= quantile_df['y_test']) & (quantile_df['y_test'] <= quantile_df[upper_col])).mean()
-        coverage_pred = ((quantile_df['y_pred_lower'] <= quantile_df['y_test']) & (quantile_df['y_test'] <= quantile_df['y_pred_upper'])).mean()
-
-        coverage_results.append((q, coverage_aar, coverage_pred))
-
-    # Convert results to DataFrame for easy plotting
-    coverage_df = pd.DataFrame(coverage_results, columns=['Quantile', 'Coverage_AAR', 'Coverage_Pred'])
-
-    # Plot
-    plt.figure(figsize=(8, 5))
-    plt.plot(coverage_df['Quantile'], coverage_df['Coverage_AAR'], marker='o', linestyle='-', label='AAR Bounds')
-    plt.plot(coverage_df['Quantile'], coverage_df['Coverage_Pred'], marker='s', linestyle='--', label='Predicted Bounds')
-
-    plt.xlabel(f'{atypicality_score_title} Atypicality Quantile')
-    plt.ylabel('Coverage')
-    plt.title(f'Coverage vs. {atypicality_score_title} Atypicality Quantile')
-    plt.legend()
-    plt.grid(True)
-
-    # Set y-axis limits if specified
-    if ylim_bottom is not None or ylim_top is not None:
-        plt.ylim(ylim_bottom, ylim_top)
-
-    plt.show()
 
 # Where in the originally generated intervals do our points lie? 
 def plot_ytest_distribution(df, atypicality_col='log_joint_mvn_score', num_quantiles=5, lower_col='y_pred_lower', upper_col='y_pred_upper', aapi=True):
@@ -463,4 +417,140 @@ def plot_lambda_metrics(lambda_metrics):
     cbar.outline.set_visible(False)  # This removes the outline
     plt.grid(True)
 
+    plt.show()
+
+# Plotting 3-subplot figure for best lambda
+# Helper function to filter list of dictionaries
+def preprocess_and_filter_data(data, data_generation_setting, cp_model, atypicality_scores):
+    filtered_data = [
+        entry for entry in data
+        if entry['data_generation_setting'] == data_generation_setting and 
+        entry['cp_model'] == cp_model and 
+        entry['atyp_col'] in atypicality_scores
+    ]
+    return filtered_data
+
+# Helper function to get paired data
+def extract_paired_metrics(filtered_data, atypicality_scores, metric):
+    # For each atypicality score, get the best lambda (if it's not zero)
+    lambda_0_data = {}
+    best_lambda_data = {}
+
+    for entry in filtered_data:
+        lambda_value = entry['lambda']
+        if lambda_value == 0.0:
+            lambda_0_data[entry['atyp_col']] = entry[metric]
+        else:
+            # Store non-zero lambda values
+            if entry['atyp_col'] not in best_lambda_data or entry[metric] > best_lambda_data[entry['atyp_col']][metric]:
+                best_lambda_data[entry['atyp_col']] = entry
+
+    # Merge data for lambda = 0 and the best lambda
+    pairs = []
+    for score in atypicality_scores:
+        # Get coverage for lambda = 0
+        coverage_lambda_0 = lambda_0_data.get(score, None)
+        # Get coverage for best lambda
+        best_lambda_entry = best_lambda_data.get(score, None)
+        coverage_best_lambda = best_lambda_entry[metric] if best_lambda_entry else coverage_lambda_0
+
+        pairs.append((coverage_lambda_0, coverage_best_lambda))
+    return pairs
+
+# Helper function to make paired bar plot 
+# Input axes, filtered data, which metric
+def plot_paired_bar_chart(filtered_data, atypicality_scores, metric, metric_title, ax):
+    """
+    Plots a paired bar chart for lambda = 0 vs. best lambda.
+    
+    Parameters:
+    - atypicality_scores: List of atypicality scores (x-axis labels).
+    - pairs: List of tuples containing paired coverage values for each score.
+    - ax: The axes object to plot the chart on (for use in subplots).
+    """
+    bar_width = 0.35
+    index = np.arange(len(atypicality_scores))
+    pairs = extract_paired_metrics(filtered_data, atypicality_scores, metric)
+
+    # Create bars for lambda = 0 and best lambda
+    bar1 = ax.bar(index, [pair[0] for pair in pairs], bar_width, label='Lambda = 0')
+    bar2 = ax.bar(index + bar_width, [pair[1] for pair in pairs], bar_width, label='Best Lambda')
+
+    # Adding labels and title
+    ax.set_xlabel('Atypicality Score')
+    ax.set_ylabel(metric_title)
+    ax.set_title(f'Predicted vs. AAPI {metric_title} Comparison ')
+    ax.set_xticks(index + bar_width / 2)
+    ax.set_xticklabels(atypicality_scores)
+
+    if metric == 'coverage_mean':
+        ax.set_ylim(0, 1)
+    elif metric == 'beta_coeff_mean':
+        ax.set_ylim(-0.15, 0.15)
+        ax.axhline(y=0, color='grey', linestyle='dashed')
+
+    ax.legend()
+
+# Helper function for coverage plot
+def coverage_atypicality_plot(merged_df, atypicality_score_title, ax,
+                              ylim_bottom=None, ylim_top=None):
+    """Distinct from `plot_coverage_across_atypicality_quantile` in that this function
+    plots already-aggregated coverage, instead of aggregating within the function. 
+    `plot_coverage_across_atypicality_quantile` also plots different lambda values; this
+    function does not.
+    """
+
+    ax.errorbar(
+        merged_df['Quantile'],
+        merged_df[('Coverage', 'mean')],
+        yerr=merged_df[('Coverage', 'std')],
+        fmt='o-',
+        capsize=4
+    )
+
+    ax.set_xlabel(f'{atypicality_score_title} Atypicality Quantile')
+    ax.set_ylabel('Coverage')
+    ax.set_title(f'Coverage vs. {atypicality_score_title} Quantile')
+    ax.grid(True)
+
+    if ylim_bottom is not None or ylim_top is not None:
+        ax.set_ylim(ylim_bottom, ylim_top)
+
+def plot_datagen_lambda_comparison(lambda_metric_results, 
+                                   coverage_results,
+                                    data_generation_setting,
+                                    data_generation_setting_title,
+                                    cp_model,
+                                    atyp_col = 'log_joint_mvn_score',
+                                    atypicality_score_title = 'Log Joint MVN Score',
+                                    atypicality_scores = ['knn_score', 'kde_score', 'log_joint_mvn_score', 'gmm_score'],
+                                    true_atypicality=False):
+    
+    # Filter for data generation process and CP algorithm
+    lambda_metric_results_filtered = preprocess_and_filter_data(lambda_metric_results, data_generation_setting, cp_model, atypicality_scores)
+    # coverage_result_filtered = preprocess_and_filter_data(coverage_results, data_generation_setting, cp_model, [atyp_col])[0]['merged_df']
+    coverage_result_filtered = preprocess_and_filter_data(coverage_results, data_generation_setting, cp_model, [atyp_col])[0]['merged_df']
+
+    # Example usage for subplots:
+    fig, axes = plt.subplots(1, 3, figsize=(16, 6))  # 1 row, 2 columns
+
+    # Assume `atypicality_scores` and `pairs` are already defined
+    available_scores = sorted({e['atyp_col'] for e in lambda_metric_results_filtered})
+    plot_paired_bar_chart(lambda_metric_results_filtered, available_scores, 'coverage_mean', 'Coverage Mean', axes[0])
+    plot_paired_bar_chart(lambda_metric_results_filtered, available_scores, 'beta_coeff_mean', 'Beta Coefficient', axes[1])
+    coverage_atypicality_plot(coverage_result_filtered, atypicality_score_title, axes[2])
+
+    # Add a bigger title for the entire plot
+    if true_atypicality == True:
+        atypicality_type_title = 'True Atypicality'
+        filepath = f"../plots/lam3fig-testatypicality-{atyp_col}-{str(data_generation_setting).split(' ')[1].split('_')[3]}data-{str(cp_model).split(' ')[1].split('_')[1]}cp.png"
+    else:
+        atypicality_type_title = 'Predicted Atypicality'
+        filepath = f"../lam3fig-predatypicality-{atyp_col}-{str(data_generation_setting).split(' ')[1].split('_')[3]}data-{str(cp_model).split(' ')[1].split('_')[1]}cp.png"
+    fig.suptitle(f"Overall Comparison for {data_generation_setting_title} — {atypicality_type_title}, {str(cp_model).split(' ')[1].split('_')[1].upper()} CP", fontsize=16, fontweight='bold')
+
+    plt.tight_layout()
+    plt.subplots_adjust(top=0.85)  # Adjust space for the title
+
+    plt.savefig(filepath)
     plt.show()
