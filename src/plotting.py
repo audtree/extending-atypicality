@@ -386,10 +386,6 @@ def plot_lambda_metrics(lambda_metrics):
     coeff_lowers = []
     coeff_uppers = []
 
-    mse_means = []
-    mse_lowers = []
-    mse_uppers = []
-
     mse_mean_means = []
     mse_mean_lowers = []
     mse_mean_uppers = []
@@ -410,10 +406,6 @@ def plot_lambda_metrics(lambda_metrics):
         coeff_means.append(metrics['beta_coefficients']['mean'])
         coeff_lowers.append(metrics['beta_coefficients']['lower'])
         coeff_uppers.append(metrics['beta_coefficients']['upper'])
-        
-        mse_means.append(metrics['mse']['mean'])
-        mse_lowers.append(metrics['mse']['lower'])
-        mse_uppers.append(metrics['mse']['upper'])
 
         mse_mean_means.append(metrics['mse_mean']['mean'])
         mse_mean_lowers.append(metrics['mse_mean']['lower'])
@@ -427,7 +419,7 @@ def plot_lambda_metrics(lambda_metrics):
     # Plot lambda vs. mean coverage
     plt.figure(figsize=(15, 5))
 
-    plt.subplot(1, 4, 1)
+    plt.subplot(1, 3, 1)
     plt.errorbar(lambdas, coverage_means, yerr=[np.array(coverage_means) - np.array(coverage_lowers),
                                                  np.array(coverage_uppers) - np.array(coverage_means)],
                  fmt='o', label='Coverage', capsize=5, color='blue')
@@ -437,7 +429,7 @@ def plot_lambda_metrics(lambda_metrics):
     plt.grid(True)
 
     # Plot lambda vs. mean coefficients
-    plt.subplot(1, 4, 2)
+    plt.subplot(1, 3, 2)
     plt.errorbar(lambdas, coeff_means, yerr=[np.array(coeff_means) - np.array(coeff_lowers),
                                               np.array(coeff_uppers) - np.array(coeff_means)],
                  fmt='o', label='Coefficient', capsize=5, color='green')
@@ -447,17 +439,7 @@ def plot_lambda_metrics(lambda_metrics):
     plt.grid(True)
 
     # Plot lambda vs. mean MSE
-    plt.subplot(1, 4, 3)
-    plt.errorbar(lambdas, mse_means, yerr=[np.array(mse_means) - np.array(mse_lowers),
-                                            np.array(mse_uppers) - np.array(mse_means)],
-                 fmt='o', label='MSE', capsize=5, color='red')
-    plt.xlabel('Lambda')
-    plt.ylabel('Mean MSE')
-    plt.title('Lambda vs. Mean MSE')
-    plt.grid(True)
-
-    # Plot lambda vs. mean MSE
-    plt.subplot(1, 4, 4)
+    plt.subplot(1, 3, 3)
     plt.errorbar(lambdas, mse_mean_means, yerr=[np.array(mse_mean_means) - np.array(mse_mean_lowers),
                                             np.array(mse_mean_uppers) - np.array(mse_mean_means)],
                  fmt='o', label='MSE from Mean', capsize=5, color='orange')

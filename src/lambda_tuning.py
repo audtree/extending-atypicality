@@ -1,7 +1,7 @@
 import numpy as np
 import pandas as pd
 from sklearn.linear_model import LinearRegression
-from sklearn.metrics import r2_score, mean_squared_error
+from sklearn.metrics import mean_squared_error
 
 import sys
 sys.path.append("../src")
@@ -9,51 +9,7 @@ sys.path.append("../src")
 from atypicality import compute_atypicality_scores
 from data_generation_settings import generate_and_split_mvn_data, generate_and_split_gmm_data
 from fit_cp_models import fit_rf_cp_model, predict_cp_intervals
-from compute_bounds import compute_adjusted_bounds, compute_coverage_by_quantile
-
-
-def calc_lam_aar_intervals(atyp_col, atypicality_settings, make_and_split_data=generate_and_split_mvn_data, 
-                           fit_cp_model=fit_rf_cp_model, n_splits=10, true_atypicality=False, random_seed_start=0):
-    
-    all_results = {f"{atyp_col}_lam{str(lam).replace('.', '-')}": [] for atyp_col, _, _, lam in atypicality_settings}
-
-    for i in range(n_splits):
-        print(f"Running split {i+1}/{n_splits}")
-        X_fit, X_calib, X_test, y_fit, y_calib, y_test, scaler = make_and_split_data(random_seed=random_seed_start + i)
-        # dataset = list(zip(X_fit, y_fit))
-        # dataset_hash = hash_dataset(dataset)
-        # used_hyperparametertuning_datasets.add(dataset_hash)
-
-        # Train CP model and get predictions
-        lacp = fit_cp_model(X_fit, y_fit, X_calib, y_calib)
-        y_pred, y_pred_lower, y_pred_upper = predict_cp_intervals(lacp, X_test)
-
-        # Create DataFrame
-        df = pd.DataFrame(X_test, columns=[f'feature_{j}' for j in range(X_test.shape[1])])
-        df['y_test'], df['y_pred'] = y_test, y_pred[:, 0]
-        assert df['y_test'].notna().all(), "There are NaN values in df['y_test']!"
-
-        df['y_pred_lower'], df['y_pred_upper'] = y_pred_lower, y_pred_upper
-
-        med_score = np.median(compute_atypicality_scores(X_calib, y_calib, X_fit, y_fit, score_type=atyp_col))
-            
-        # Compute atypicality score for the current method
-        if true_atypicality:
-            # if true_atypicality is True, use y_test instead of y_pred
-            df[atyp_col] = compute_atypicality_scores(X_test, y_test.flatten(), X_fit, y_fit, score_type=atyp_col)
-        else:
-            # Otherwise, use y_pred
-            df[atyp_col] = compute_atypicality_scores(X_test, y_pred[:,0].flatten(), X_fit, y_fit, score_type=atyp_col)
-
-        for atyp_col, lower_col, upper_col, lam in atypicality_settings:
-            # Compute adjusted bounds
-            compute_adjusted_bounds(df, atyp_col, med_score, 'y_pred_lower', 'y_pred_upper', lower_col, upper_col, lam=lam)
-
-            # Append the dataframe of all results (every point and its interval) to a large dictionary
-            # THIS LOOP IS ACROSS RANDOM DATA SPLITS. USE THIS APPEND OPPORTUNITY TO RE-SORT RESULTS BY THEIR LAMBDA VALUE. 
-            all_results[f"{atyp_col}_lam{str(lam).replace('.', '-')}"].append(df[['y_test', 'y_pred', 'y_pred_lower', 'y_pred_upper', atyp_col, lower_col, upper_col]])
-
-    return all_results
+from compute_bounds import apply_lambda_adjustment, coverage_by_quantile, evaluate_lambda_adjusted_interval_coverage
 
 def compute_mean_stds(data):
     """
@@ -79,11 +35,7 @@ def generate_atypicality_settings_01(atyp_col, steps):
     lambda_values = np.linspace(0, 1, steps)
     
     # Generate the list of tuples
-    atypicality_settings = [
-        (atyp_col, f'aar_{atyp_col}_lower_lam{str(lam).replace(".", "-")}', 
-         f'aar_{atyp_col}_upper_lam{str(lam).replace(".", "-")}', lam) 
-        for lam in lambda_values
-    ]
+    atypicality_settings = [(atyp_col, lam) for lam in lambda_values]
     return atypicality_settings
 
 def get_bound_names_from_lambdakey(score_name):
@@ -107,31 +59,25 @@ def calc_lambda_tuning_metrics(df, atyp_col, lower_col, upper_col, y_test_col, a
     replication_results = {}
     coverage_dfs = []
     coverage_all = []
-    mse_all = []
     mse_mean_all = []
     beta_coefficients_all = []
 
     for replication_split in df:
         # Compute coverage by quantile
-        coverage_df = compute_coverage_by_quantile(replication_split, atyp_col, lower_col, upper_col, num_quantiles)
+        coverage_df = coverage_by_quantile(replication_split, atyp_col, lower_col, upper_col, num_quantiles)
         coverage_dfs.append(coverage_df)
 
         # Compute overall coverage
         overall_coverage = ((replication_split[lower_col] <= replication_split[y_test_col]) & (replication_split[y_test_col] <= replication_split[upper_col])).mean()
         coverage_all.append(float(overall_coverage))
 
-        # Compute MSE for pre-specified coverage level (assuming pre-specified coverage is a constant value)
-        print([1-alpha] * len(coverage_df), coverage_df['Coverage_AAR'])
-        mse = mean_squared_error([1-alpha] * len(coverage_df), coverage_df['Coverage_AAR'])
-        mse_all.append(mse)
-
         # Compute MSE from the mean coverage
-        mse_mean = mean_squared_error([np.mean(coverage_df['Coverage_AAR'])] * len(coverage_df), coverage_df['Coverage_AAR'])
+        mse_mean = mean_squared_error([np.mean(coverage_df['Coverage'])] * len(coverage_df), coverage_df['Coverage'])
         mse_mean_all.append(mse_mean)
 
         # Compute beta coefficient
         X = coverage_df["Quantile"].values.reshape(-1, 1)  # Reshape to 2D array for sklearn
-        y = coverage_df["Coverage_AAR"].values
+        y = coverage_df["Coverage"].values
         model = LinearRegression()
         model.fit(X, y)
         beta_coefficients_all.append(model.coef_[0])  # `coef_` contains the slope
@@ -140,7 +86,6 @@ def calc_lambda_tuning_metrics(df, atyp_col, lower_col, upper_col, y_test_col, a
     merged_df = pd.concat(coverage_dfs).groupby('Quantile').agg(['mean', 'std']).reset_index()
 
     replication_results['coverage'] = compute_mean_stds(coverage_all)
-    replication_results['mse'] = compute_mean_stds(mse_all)
     replication_results['mse_mean'] = compute_mean_stds(mse_mean_all)
     replication_results['beta_coefficients'] = compute_mean_stds(beta_coefficients_all)
 
@@ -155,9 +100,6 @@ def print_notable_lambdas(all_results):
     closest_to_zero_lambda = None
     closest_to_zero_value = float('inf')
 
-    lowest_mse_lambda = None
-    lowest_mse_value = float('inf')
-
     lowest_mse_mean_lambda = None
     lowest_mse_mean_value = float('inf')
 
@@ -165,7 +107,6 @@ def print_notable_lambdas(all_results):
     for lambda_key, replication_results in all_results.items():
         # Assuming replication_results is a DataFrame, and has 'coverage', 'mse', and 'beta_coefficients'
         coverage_mean = replication_results['coverage']['mean']
-        mse_mean = replication_results['mse']['mean']
         beta_mean = np.mean(replication_results['beta_coefficients']['mean'])  # Assuming we want the mean of all betas
         mse_mean_mean = replication_results['mse_mean']['mean']
 
@@ -178,11 +119,6 @@ def print_notable_lambdas(all_results):
         if abs(beta_mean) < abs(closest_to_zero_value):
             closest_to_zero_lambda = lambda_key
             closest_to_zero_value = beta_mean
-
-        # Find the lambda with the lowest MSE
-        if mse_mean < lowest_mse_value:
-            lowest_mse_lambda = lambda_key
-            lowest_mse_value = mse_mean
         
         # Find the lambda with the lowest mean MSE
         if mse_mean_mean < lowest_mse_mean_value:
@@ -192,7 +128,6 @@ def print_notable_lambdas(all_results):
     # Print the notable lambdas
     print(f"Lambda with highest overall coverage: {highest_coverage_lambda} with coverage {highest_coverage_value}")
     print(f"Lambda with coefficients closest to 0: {closest_to_zero_lambda} with coefficient value {closest_to_zero_value}")
-    print(f"Lambda with lowest MSE: {lowest_mse_lambda} with MSE {lowest_mse_value}")
     print(f"Lambda with lowest MSE: {lowest_mse_mean_lambda} with MSE {lowest_mse_mean_value}")
 
 def lambda_hyperparameter_tuning(atyp_col='log_joint_mvn_score', make_and_split_data=generate_and_split_gmm_data, 
@@ -210,8 +145,7 @@ def lambda_hyperparameter_tuning(atyp_col='log_joint_mvn_score', make_and_split_
         random_seed_start = 0
 
         # Generate atypicality_settings for 20 lambdas between 0 and 1
-        # atypicality_settings = generate_atypicality_settings_01(atyp_col, steps=6)
-        atypicality_settings = generate_atypicality_settings_01(atyp_col, steps=20)
+        atypicality_settings = generate_atypicality_settings_01(atyp_col, steps=5)
     
     if not hyperparameter_tuning:
         # Random seeds from 0 to n_splits-1 have already been used for hyperparameter tuning; need unseen data for evaluation
@@ -219,17 +153,18 @@ def lambda_hyperparameter_tuning(atyp_col='log_joint_mvn_score', make_and_split_
 
         # Generate the atypicality settings
         lambda_values = set([0.0, best_lambda])
-        atypicality_settings = [
-            (atyp_col, f'aar_{atyp_col}_lower_lam{str(lam).replace(".", "-")}', 
-                f'aar_{atyp_col}_upper_lam{str(lam).replace(".", "-")}', lam) 
-                for lam in lambda_values
-        ]
+        atypicality_settings = [ (atyp_col, lam) for lam in lambda_values]
     
     # Calculate n_splits replication splits for each lambda and above settings
-    lambda_results = calc_lam_aar_intervals(atyp_col=atyp_col, atypicality_settings=atypicality_settings, 
-                                            make_and_split_data=make_and_split_data, fit_cp_model=fit_cp_model, 
-                                            n_splits=n_splits, true_atypicality=true_atypicality, 
-                                            random_seed_start=random_seed_start)
+    coverage_df, lambda_results = evaluate_lambda_adjusted_interval_coverage(atypicality_settings,
+                                                    make_and_split_data,
+                                                    fit_cp_model,
+                                                    n_samples=2000,
+                                                    n_splits=n_splits,
+                                                    true_atypicality=true_atypicality,
+                                                    num_quantiles=5,
+                                                    return_df=True,
+                                                    silent=True)
 
     # Calculate metrics for each lambda across replication splits
     lambda_metrics = {}

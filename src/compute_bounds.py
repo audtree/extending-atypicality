@@ -84,7 +84,6 @@ def coverage_by_quantile(df, score_col, lower_col, upper_col, num_quantiles=5):
             "Quantile": q,
             "Coverage": ((qdf[lower_col] <= qdf["y_test"]) &
                          (qdf["y_test"] <= qdf[upper_col])).mean()})
-
     return pd.DataFrame(rows)
 
 def group_lambdas_by_score(settings):
@@ -101,10 +100,14 @@ def evaluate_lambda_adjusted_interval_coverage(
         n_splits,
         true_atypicality,
         num_quantiles,
+        return_df,
         silent):
     
     lambdas_by_score = group_lambdas_by_score(atypicality_settings)
-    results = []
+    coverage_results = []
+    df_results = {f"{score_type}_lam{str(lam).replace('.', '-')}" : [] 
+              for score_type, lambdas in group_lambdas_by_score(atypicality_settings).items() 
+              for lam in lambdas}
 
     # Wrap the entire loop in the suppress context
     context = suppress_all_output() if silent else nullcontext()
@@ -141,11 +144,20 @@ def evaluate_lambda_adjusted_interval_coverage(
                             (lower[mask] <= y_test[mask]) &
                             (y_test[mask] <= upper[mask]))
 
-                        results.append({
+                        coverage_results.append({
                             "score": score_type,
                             "lambda": lam,
                             "quantile": q,
                             "coverage": coverage,
                             "split": split})
-
-    return pd.DataFrame(results)
+                        
+                        # Store raw dataframe if requested
+                        if return_df:
+                            base_df[f"aar_{score_type}_lower_lam{str(lam).replace('.', '-')}"] = lower
+                            base_df[f"aar_{score_type}_upper_lam{str(lam).replace('.', '-')}"] = upper
+                            df_results[f"{score_type}_lam{str(lam).replace('.', '-')}"].append(
+                                base_df[['y_test', 'y_pred', 'y_pred_lower', 'y_pred_upper', score_type,
+                                        f"aar_{score_type}_lower_lam{str(lam).replace('.', '-')}",
+                                        f"aar_{score_type}_upper_lam{str(lam).replace('.', '-')}"]])
+                            
+    return pd.DataFrame(coverage_results), df_results
