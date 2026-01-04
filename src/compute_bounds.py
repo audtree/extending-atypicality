@@ -97,11 +97,12 @@ def evaluate_lambda_adjusted_interval_coverage(
         make_and_split_data,
         fit_cp_model,
         n_samples,
-        n_splits,
-        true_atypicality,
-        num_quantiles,
-        return_df,
-        silent):
+        n_splits=5,
+        true_atypicality=True,
+        num_quantiles=5,
+        return_df=False,
+        silent=False,
+        random_seed_start=0):
     
     lambdas_by_score = group_lambdas_by_score(atypicality_settings)
     coverage_results = []
@@ -113,6 +114,7 @@ def evaluate_lambda_adjusted_interval_coverage(
     context = suppress_all_output() if silent else nullcontext()
     with context:
         for split in range(n_splits):
+            seed = random_seed_start + split
             for score_type, lambdas in lambdas_by_score.items():
 
                 base_df = generate_base_cp_intervals_and_atypicality(
@@ -120,7 +122,7 @@ def evaluate_lambda_adjusted_interval_coverage(
                     fit_cp_model,
                     score_type,
                     n_samples,
-                    split,
+                    seed,
                     true_atypicality)
 
                 y_test = base_df["y_test"].values

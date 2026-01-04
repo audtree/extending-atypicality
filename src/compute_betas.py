@@ -64,7 +64,7 @@ def compute_beta(true_atypicality, silent=False):
                     ]
 
                 # Run the new evaluation function
-                df_results = evaluate_lambda_adjusted_interval_coverage(
+                df_results, _ = evaluate_lambda_adjusted_interval_coverage(
                     atypicality_settings,
                     make_and_split_data=data_gen,
                     fit_cp_model=cp_model,
@@ -72,6 +72,7 @@ def compute_beta(true_atypicality, silent=False):
                     n_splits=5,
                     true_atypicality=true_atypicality,
                     num_quantiles=5,
+                    return_df=False,
                     silent=silent
                 )
 

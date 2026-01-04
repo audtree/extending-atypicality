@@ -31,7 +31,6 @@ def compute_mean_stds(data):
 
 def generate_atypicality_settings_01(atyp_col, steps):
     # Generate lambda values from 0 to 1 with 20 steps
-    # lambda_values = np.linspace(0, 1, steps) # TODO: change back
     lambda_values = np.linspace(0, 1, steps)
     
     # Generate the list of tuples
@@ -153,10 +152,10 @@ def lambda_hyperparameter_tuning(atyp_col='log_joint_mvn_score', make_and_split_
 
         # Generate the atypicality settings
         lambda_values = set([0.0, best_lambda])
-        atypicality_settings = [ (atyp_col, lam) for lam in lambda_values]
+        atypicality_settings = [(atyp_col, lam) for lam in lambda_values]
     
     # Calculate n_splits replication splits for each lambda and above settings
-    coverage_df, lambda_results = evaluate_lambda_adjusted_interval_coverage(atypicality_settings,
+    _, lambda_results = evaluate_lambda_adjusted_interval_coverage(atypicality_settings,
                                                     make_and_split_data,
                                                     fit_cp_model,
                                                     n_samples=2000,
@@ -164,7 +163,8 @@ def lambda_hyperparameter_tuning(atyp_col='log_joint_mvn_score', make_and_split_
                                                     true_atypicality=true_atypicality,
                                                     num_quantiles=5,
                                                     return_df=True,
-                                                    silent=True)
+                                                    silent=True,
+                                                    random_seed_start=random_seed_start)
 
     # Calculate metrics for each lambda across replication splits
     lambda_metrics = {}
