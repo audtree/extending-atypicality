@@ -137,8 +137,8 @@ def evaluate_lambda_adjusted_interval_coverage(
                 for lam in lambdas:
                     scaling = 1 + lam * base_scaling
 
-                    lower = y_pred - scaling * (y_pred - lower0)
-                    upper = y_pred + scaling * (upper0 - y_pred)
+                    lower = y_pred - scaling * np.abs(y_pred - lower0)
+                    upper = y_pred + scaling * np.abs(upper0 - y_pred)
 
                     for q in range(num_quantiles):
                         mask = quantiles == q

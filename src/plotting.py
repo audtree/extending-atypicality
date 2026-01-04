@@ -14,9 +14,9 @@ data_generation_mapping = {
 atypicality_score_mapping = {
     'knn_score': 'KNN',
     'kde_score': 'KDE',
-    'lognormal_score': 'Log Normal',
+    'lognormal_score': 'Log\nNormal',
     'gmm_score': 'GMM',
-    'logjointmvn_score': 'Log Joint MVN'
+    'logjointmvn_score': 'Log Joint\nMVN'
 }
 
 cp_model_mapping = {
@@ -123,30 +123,67 @@ def plot_coverage_across_atypicality_quantile(
         Quantile, Coverage, lambda, score, split
     """
     # Filter for specified score
-    df = df[df['score'] == atypicality_score]
-
+    df = df[df['score'] == atypicality_score].copy()
+    
     # Aggregate across splits
     agg = (df.groupby(['lambda', 'quantile'])['coverage']
-        .agg(['mean', 'std'])
-        .reset_index())
+           .agg(['mean', 'std'])
+           .reset_index())
     agg['quantile'] = agg['quantile'].astype(int)
 
-    plt.figure(figsize=(8, 5))
+    # Create figure and axis
+    fig, ax = plt.subplots(figsize=(5, 4))
 
-    for lam, lam_df in agg.groupby('lambda'):
-        plt.errorbar(
+    # Define colors and markers for each lambda
+    colors = ['#4A1153', '#C154D1', '#FF8000', '#B84000', '#007ACC']  # extend if more lambdas
+    
+    for i, (lam, lam_df) in enumerate(agg.groupby('lambda')):
+        color = colors[i % len(colors)]
+
+        if (lam == 0):
+            fmt_solid = 'o-'
+        else:
+            fmt_solid = 'o--'
+
+        # Plot mean line
+        ax.errorbar(
+            lam_df['quantile'],
+            lam_df['mean'],
+            fmt=fmt_solid,
+            label=f'λ = {lam}',
+            capsize=5,
+            color=color,
+            alpha=1
+        )
+        # Add translucent error bars
+        ax.errorbar(
             lam_df['quantile'],
             lam_df['mean'],
             yerr=lam_df['std'],
             fmt='o-',
-            capsize=4,
-            label=f'λ = {lam}')
+            capsize=5,
+            color=color,
+            alpha=0.3,
+            elinewidth=2,
+            label=None
+        )
 
-    plt.xlabel(f'{atypicality_score_title} Atypicality Quantile')
-    plt.ylabel('Coverage')
-    plt.title(f'Coverage vs. {atypicality_score_title} Atypicality Quantile')
-    plt.legend()
-    plt.grid(True)
+    # Labels and title
+    ax.set_xlabel(f'Atypicality Quantile\n({atypicality_score_title} Atypicality Score)')
+    ax.set_ylabel('Coverage')
+    ax.set_title(f'Coverage vs. {atypicality_score_title} Atypicality Quantile')
+
+    # Grid and style
+    ax.grid(True, which="both", linestyle='dotted')
+    ax.tick_params(axis='both', colors='grey')
+    for spine in ax.spines.values():
+        spine.set_edgecolor('grey')
+
+    # Set x-ticks to only quantiles
+    ax.set_xticks(agg['quantile'].unique())
+
+    ax.legend()
+    plt.tight_layout()
 
     if ylim_bottom is not None or ylim_top is not None:
         plt.ylim(ylim_bottom, ylim_top)

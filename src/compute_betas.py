@@ -68,7 +68,7 @@ def compute_beta(true_atypicality, silent=False):
                     atypicality_settings,
                     make_and_split_data=data_gen,
                     fit_cp_model=cp_model,
-                    n_samples=500,
+                    n_samples=5000,
                     n_splits=5,
                     true_atypicality=true_atypicality,
                     num_quantiles=5,
