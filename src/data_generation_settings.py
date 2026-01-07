@@ -22,6 +22,43 @@ def split_and_scale_data(X, y, test_size, calib_size, random_seed):
     X_test = scaler.transform(X_test)
 
     return X_fit, X_calib, X_test, y_fit, y_calib, y_test, scaler
+def split_and_scale_data_attr(X, y, test_size, calib_size, random_seed, extra_arrays=None):
+    """
+    Same as split_and_scale_data, but with a sensitive attribute in extra_arrays.
+    """
+    if extra_arrays is None:
+        extra_arrays = []
+
+    # First split: train / test
+    split_out = train_test_split(
+        X, y, *extra_arrays,
+        test_size=test_size,
+        random_state=random_seed)
+
+    X_train, X_test = split_out[0], split_out[1]
+    y_train, y_test = split_out[2], split_out[3]
+
+    n_extra = len(extra_arrays)
+    extra_train = split_out[4 : 4 + n_extra]
+    extra_test  = split_out[4 + n_extra :]
+
+    # Second split: fit / calib (ONLY training extras)
+    split_out = train_test_split(
+        X_train, y_train, *extra_train,
+        test_size=calib_size,
+        random_state=random_seed)
+
+    X_fit, X_calib = split_out[0], split_out[1]
+    y_fit, y_calib = split_out[2], split_out[3]
+    extra_fit_calib = split_out[4:]
+
+    # Scale X only
+    scaler = StandardScaler()
+    X_fit = scaler.fit_transform(X_fit)
+    X_calib = scaler.transform(X_calib)
+    X_test = scaler.transform(X_test)
+
+    return X_fit, X_calib, X_test, y_fit, y_calib, y_test, *extra_fit_calib, *extra_test, scaler
 
 # Generate simulated datasets
 def generate_and_split_mvn_data(random_seed, test_size=0.2, calib_size=0.2, noise_std=0.5, n_samples=5000):
@@ -245,3 +282,4 @@ def load_and_split_support_data(random_seed, test_size=0.2, calib_size=0.2, n_sa
     X_fit, X_calib, X_test, y_fit, y_calib, y_test, scaler = split_and_scale_data(X, y, test_size, calib_size, random_seed)
 
     return X_fit, X_calib, X_test, y_fit, y_calib, y_test, scaler
+

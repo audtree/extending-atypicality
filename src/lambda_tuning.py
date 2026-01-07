@@ -158,7 +158,7 @@ def lambda_hyperparameter_tuning(atyp_col='log_joint_mvn_score', make_and_split_
     _, lambda_results = evaluate_lambda_adjusted_interval_coverage(atypicality_settings,
                                                     make_and_split_data,
                                                     fit_cp_model,
-                                                    n_samples=2000,
+                                                    n_samples=5000,
                                                     n_splits=n_splits,
                                                     true_atypicality=true_atypicality,
                                                     num_quantiles=5,

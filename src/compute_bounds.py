@@ -30,10 +30,20 @@ def generate_base_cp_intervals_and_atypicality(
         score_type,
         n_samples,
         random_seed,
-        true_atypicality):
+        true_atypicality,
+        extra_attribute=False):
     
-    X_fit, X_calib, X_test, y_fit, y_calib, y_test, _ = \
-        make_and_split_data(random_seed=random_seed, n_samples=n_samples)
+    split_out = make_and_split_data(
+        random_seed=random_seed,
+        n_samples=n_samples)
+
+    if extra_attribute:
+        X_fit, X_calib, X_test, y_fit, y_calib, y_test, \
+         attr_fit, attr_calib, attr_test, scaler = split_out
+    else:
+        X_fit, X_calib, X_test, y_fit, y_calib, y_test, \
+            scaler = split_out
+        attr_test = None
 
     lacp = fit_cp_model(X_fit, y_fit, X_calib, y_calib)
     y_pred, y_lower, y_upper = predict_cp_intervals(lacp, X_test)
@@ -48,13 +58,6 @@ def generate_base_cp_intervals_and_atypicality(
     scores = compute_atypicality_scores(
         X_test, y_for_score, X_fit, y_fit, score_type=score_type)
 
-    print("Test!")
-    print("y_test:", np.shape(y_test))
-    print("y_pred:", np.shape(y_pred))
-    print("y_lower:", np.shape(y_lower))
-    print("y_upper:", np.shape(y_upper))
-    print("scores:", np.shape(scores))
-
     df = pd.DataFrame({
             "y_test": y_test,
             "y_pred": y_pred[:, 0],
@@ -62,6 +65,9 @@ def generate_base_cp_intervals_and_atypicality(
             "y_pred_upper": y_upper,
             score_type: scores,
             "base_scaling": (scores - med_score) / med_score})
+    
+    if attr_test is not None:
+        df['attr'] = attr_test
 
     return df
 
@@ -101,6 +107,7 @@ def evaluate_lambda_adjusted_interval_coverage(
         true_atypicality=True,
         num_quantiles=5,
         return_df=False,
+        extra_attribute=False,
         silent=False,
         random_seed_start=0):
     
@@ -123,7 +130,8 @@ def evaluate_lambda_adjusted_interval_coverage(
                     score_type,
                     n_samples,
                     seed,
-                    true_atypicality)
+                    true_atypicality,
+                    extra_attribute)
 
                 y_test = base_df["y_test"].values
                 y_pred = base_df["y_pred"].values
@@ -153,13 +161,18 @@ def evaluate_lambda_adjusted_interval_coverage(
                             "coverage": coverage,
                             "split": split})
                         
-                        # Store raw dataframe if requested
-                        if return_df:
-                            base_df[f"aapi_{score_type}_lower_lam{str(lam).replace('.', '-')}"] = lower
-                            base_df[f"aapi_{score_type}_upper_lam{str(lam).replace('.', '-')}"] = upper
-                            df_results[f"{score_type}_lam{str(lam).replace('.', '-')}"].append(
-                                base_df[['y_test', 'y_pred', 'y_pred_lower', 'y_pred_upper', score_type,
-                                        f"aapi_{score_type}_lower_lam{str(lam).replace('.', '-')}",
-                                        f"aapi_{score_type}_upper_lam{str(lam).replace('.', '-')}"]])
+                    # Store raw dataframe if requested
+                    if return_df:
+                        base_df[f"aapi_{score_type}_lower_lam{str(lam).replace('.', '-')}"] = lower
+                        base_df[f"aapi_{score_type}_upper_lam{str(lam).replace('.', '-')}"] = upper
+                        
+                        cols = ['y_test', 'y_pred', 'y_pred_lower', 'y_pred_upper', score_type,
+                                    f"aapi_{score_type}_lower_lam{str(lam).replace('.', '-')}",
+                                    f"aapi_{score_type}_upper_lam{str(lam).replace('.', '-')}"]
+                        if extra_attribute:
+                            cols.append("attr")
+                        
+                        df_results[f"{score_type}_lam{str(lam).replace('.', '-')}"].append(
+                            base_df[cols])
                             
     return pd.DataFrame(coverage_results), df_results

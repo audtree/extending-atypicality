@@ -41,10 +41,12 @@ def plot_betagrouped_by_atypicality(beta_df, true_atypicality, outputfile):
     width_ratios = [4, 5, 4] 
     fig, axes = plt.subplots(1, 3, gridspec_kw={'width_ratios': width_ratios}, figsize=(11, 4), sharey=True)
 
-    # Unique CP models and colors
+    # Unique CP models, colors, and markers
     cp_models = beta_df["CP Model Label"].unique()
     cp_colors = sns.color_palette("Set1", len(cp_models))
     cp_color_map = {cp: cp_colors[i] for i, cp in enumerate(cp_models)}
+    markers = ['o', 's', '^', 'D', 'P', 'X']  # extend if needed
+    cp_marker_map = {cp: markers[i] for i, cp in enumerate(cp_models)}
 
     # Unique data generation settings and titles
     data_generation_settings = beta_df["Data Generation Label"].unique()
@@ -57,7 +59,17 @@ def plot_betagrouped_by_atypicality(beta_df, true_atypicality, outputfile):
         x_positions = np.arange(len(atypicality_scores))
 
         # Small offsets to separate CP models within the same group
-        offsets = np.linspace(-0.15, 0.15, len(cp_models))
+        offsets = np.linspace(-0.18, 0.18, len(cp_models))
+
+        # Customize x-axis and plot
+        ax.set_xticks(x_positions)
+        ax.set_xticklabels(atypicality_scores, rotation=0, fontsize=11)
+        ax.axhline(0, color='r', linestyle='--', alpha=0.5)
+        ax.set_title(data_gen)
+        ax.grid(True, linestyle="dotted", alpha=0.6)
+        ax.tick_params(axis='both', colors='grey')
+        for spine in ax.spines.values():
+            spine.set_edgecolor('grey')
 
         for i, atypicality in enumerate(atypicality_scores):
             group_subset = subset[subset["Atypicality Label"] == atypicality]
@@ -70,43 +82,34 @@ def plot_betagrouped_by_atypicality(beta_df, true_atypicality, outputfile):
                 mean_beta = df_point["Mean Beta"].values[0]
                 std_beta = df_point["Std Beta"].values[0]
                 color = cp_color_map[cp_model]
+                marker = cp_marker_map[cp_model]
 
                 # Plot error bars and points
                 ax.errorbar(
                     x_positions[i] + offsets[j], mean_beta, yerr=std_beta,
-                    fmt='o', capsize=5, color=color, markersize=8, elinewidth=1.5,
-                    alpha=0.5
-                )
+                    fmt=marker, capsize=5, markersize=8, color=color, elinewidth=1.5, # elinewidth=1.5, markersize=8,
+                    alpha=0.5)
                 ax.plot(
                     x_positions[i] + offsets[j], mean_beta,
-                    marker='o', color=color, markersize=8, alpha=1
+                    marker=marker, markersize=8, color=color, alpha=1
                 )
 
-        # Customize x-axis and plot
-        ax.set_xticks(x_positions)
-        ax.set_xticklabels(atypicality_scores, rotation=0, fontsize=11)
-        ax.axhline(0, color='r', linestyle='--', alpha=0.5)
-        ax.set_title(data_gen)
-        ax.grid(True, linestyle="dotted", alpha=0.6)
-        ax.tick_params(axis='both', colors='grey')
-        for spine in ax.spines.values():
-            spine.set_edgecolor('grey')
-
+        
     axes[0].set_ylabel("Slope (β)")
 
-    fig.text(0.5, 0.07, 'Atypicality Score', ha='center', va='center')
+    fig.text(0.5, 0.08, 'Atypicality Score', ha='center', va='center')
 
     # Legend for CP models
-    handles = [plt.Line2D([0], [0], marker='o', color=color, markersize=8, linestyle='')
-               for color in cp_color_map.values()]
-    labels = cp_models  # or a mapping to nicer labels
-    fig.legend(handles, labels, title="CP Model",
-               loc="lower center", ncol=3, bbox_to_anchor=(0.5, -0.1))
+    handles = [plt.Line2D( [0], [0], marker=cp_marker_map[cp], color=cp_color_map[cp], 
+                          markersize=8, linestyle='' ) for cp in cp_models]
+    labels = cp_models 
+    fig.legend(handles, labels, 
+               loc="lower right", ncol=3, bbox_to_anchor=(1, 0.02))
 
     if true_atypicality:
-        plt.ylim(-0.14, 0.14)
+        plt.ylim(-0.17, 0.17)
     else:
-        plt.ylim(-0.07, 0.07)
+        plt.ylim(-0.075, 0.075)
     plt.tight_layout(rect=[0, 0.1, 1, 1])
     plt.savefig("../plots/" + outputfile)
     plt.show()
