@@ -594,3 +594,175 @@ def plot_datagen_lambda_comparison(lambda_metric_results,
 
     plt.savefig(filepath)
     plt.show()
+
+# Plot real-world dataset attribute analyses
+def avg_coverage_by_attr_witherror(dfs, attribute="attr", attribute_name="Ethnicity", ethnicity_mapping=None, desired_order=None):
+    # Compute coverage for each dataframe if not already present
+    for df in dfs:
+        df['covered'] = ((df['y_test'] >= df['y_pred_lower']) & 
+                        (df['y_test'] <= df['y_pred_upper'])).astype(int)
+    
+    # Stack coverage across splits for each group
+    coverage_by_group = pd.concat([df.groupby(attribute)['covered'].mean().rename(f'split_{i}') 
+        for i, df in enumerate(dfs)], axis=1)
+    
+    # Compute mean and standard error
+    coverage_mean = coverage_by_group.mean(axis=1)
+    coverage_se = coverage_by_group.std(axis=1, ddof=1) / np.sqrt(len(dfs))
+
+    # Apply ethnicity mapping if provided
+    if ethnicity_mapping is not None:
+        coverage_mean.index = coverage_mean.index.map(lambda x: ethnicity_mapping.get(x, x))
+        coverage_se.index = coverage_se.index.map(lambda x: ethnicity_mapping.get(x, x))
+    
+    # Reorder according to desired_order if provided
+    if desired_order is not None:
+        coverage_mean = coverage_mean.reindex(desired_order)
+        coverage_se = coverage_se.reindex(desired_order)
+
+    fig, ax = plt.subplots(figsize=(5,4))
+
+    # Create shades of blue for bars
+    n_bars = len(coverage_mean)
+    colors = plt.cm.Blues(np.linspace(1, 0.4, n_bars))
+
+    # Bar positions
+    x_pos = np.arange(len(coverage_mean))
+
+    # Bar plot with error bars
+    ax.bar(
+        x_pos,
+        coverage_mean.values,
+        yerr=coverage_se.values,
+        capsize=5,
+        color=colors,
+        width=0.8,
+        alpha=0.82,
+        ecolor='#18203B')
+
+    ax.set_xticks(x_pos)
+    ax.set_xticklabels(coverage_mean.index, rotation=0, ha='center')
+    ax.set_xlabel(attribute_name)
+    ax.set_ylabel('Coverage')
+
+    # Add numbers on top of bars
+    for i, (mean, se) in enumerate(zip(coverage_mean.values, coverage_se.values)):
+        # Set color: first 3 bars white, rest #18203B
+        text_color = 'white' if i < 2 else '#18203B'
+        
+        ax.text(
+            i,
+            mean - 0.075,
+            f"{mean:.2f}",
+            ha='center',
+            fontsize=10,
+            color=text_color
+        )
+
+    # Grid and style
+    ax.set_axisbelow(True)
+    ax.grid(True, axis="y", which="major", linestyle='dotted')
+    ax.tick_params(axis='both', colors='grey')
+    for spine in ax.spines.values():
+        spine.set_edgecolor('grey')
+
+    plt.show()
+def heatmap_by_quantile_attribute(dfs, attribute="attr", atyp_col='logjointmvn_score', num_quantiles=5, attribute_name="Ethnicity", ethnicity_mapping=None):
+    # Ensure 'covered' column exists for each split
+    for df in dfs:
+        df['covered'] = ((df['y_test'] >= df['y_pred_lower']) & 
+                         (df['y_test'] <= df['y_pred_upper'])).astype(int)
+        df['quantile'] = pd.qcut(df[atyp_col], num_quantiles, labels=False)
+
+    # Compute coverage by quantile and attribute for each split
+    coverage_splits = []
+    for df in dfs:
+        coverage_q_attr = df.groupby(['quantile', attribute])['covered'].mean().unstack()
+        coverage_splits.append(coverage_q_attr)
+    
+    # Take mean across splits
+    coverage_mean = pd.concat(coverage_splits).groupby(level=0).mean()
+    
+    # Apply ethnicity mapping if provided
+    if ethnicity_mapping is not None:
+        coverage_mean.columns = [ethnicity_mapping.get(col, col) for col in coverage_mean.columns]
+    
+    # Plot heatmap
+    plt.figure(figsize=(5,4))
+    ax = sns.heatmap(coverage_mean, annot=True, fmt=".2f", cmap="rocket_r", cbar_kws={'label': 'Average Coverage'})
+    
+    plt.xticks(rotation=0)
+    plt.xlabel(attribute_name)
+    plt.ylabel('Atypicality Quantile')
+    plt.yticks(rotation=0)
+    
+    # Style
+    ax.tick_params(axis='both', colors='grey')
+    for spine in ax.spines.values():
+        spine.set_edgecolor('grey')
+    
+    plt.tight_layout()
+    plt.show()
+def plot_mean_demographic_composition(
+    dfs,
+    score_col="logjointmvn_score",
+    attr_col="attr",
+    ethnicity_map=None,
+    desired_order=None,
+    num_quantiles=5):
+    ct_list = []
+
+    for df in dfs:
+        df = df.copy()
+
+        # Map ethnicity labels
+        if ethnicity_map is not None:
+            df[attr_col] = df[attr_col].map(ethnicity_map)
+
+        # Assign quantiles per split
+        df["quantile"] = pd.qcut(df[score_col], num_quantiles, labels=False)
+
+        # Normalized crosstab
+        ct = pd.crosstab(df["quantile"], df[attr_col], normalize="index")
+        ct_list.append(ct)
+
+    # Align columns across splits
+    all_cols = sorted(set(col for ct in ct_list for col in ct.columns))
+    ct_aligned = [ct.reindex(columns=all_cols, fill_value=0) for ct in ct_list]
+
+    # Mean composition across splits
+    mean_ct = pd.concat(ct_aligned).groupby(level=0).mean()
+
+    # Enforce desired column order
+    if desired_order is not None:
+        mean_ct = mean_ct.reindex(columns=desired_order)
+
+    # Create shades of blue (darkest first)
+    n_groups = mean_ct.shape[1]
+    colors = plt.cm.Blues(np.linspace(1, 0.4, n_groups))
+
+    # Plot
+    ax = mean_ct.plot(
+        kind="bar",
+        stacked=True,
+        figsize=(5, 4),
+        color=colors)
+
+    # Styling
+    ax.set_axisbelow(True)
+    ax.grid(True, axis="y", which="major", linestyle="dotted")
+    ax.tick_params(axis="both", colors="grey")
+    for spine in ax.spines.values():
+        spine.set_edgecolor("grey")
+
+    plt.xlabel("Atypicality Quantile")
+    plt.ylabel("Proportion")
+    plt.xticks(rotation=0)
+    handles, labels = ax.get_legend_handles_labels()
+    plt.legend(handles[::-1],
+        labels[::-1],
+        title="Ethnicity",
+        bbox_to_anchor=(1.05, 1),
+        loc="upper left")
+    plt.tight_layout()
+    plt.show()
